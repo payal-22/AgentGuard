@@ -3,6 +3,8 @@ import express, { type Request, type Response } from "express";
 
 type AgentStatus = "ACTIVE" | "PAUSED" | "REVOKED";
 
+type DecisionStatus = "ALLOWED" | "DENIED" | "APPROVAL_REQUIRED";
+
 type FinancialAgent = {
   id: string;
   name: string;
@@ -10,8 +12,22 @@ type FinancialAgent = {
   status: AgentStatus;
   allowedActions: string[];
   transactionLimit: number;
+  approvalThreshold: number;
   dailyBudget: number;
   spentToday: number;
+};
+
+type ActionRequest = {
+  agentId: string;
+  action: string;
+  amount: number;
+  customerId?: string;
+};
+
+type PolicyDecision = {
+  status: DecisionStatus;
+  reason: string;
+  policyCode: string;
 };
 
 const app = express();
@@ -33,6 +49,7 @@ const agents: FinancialAgent[] = [
     status: "ACTIVE",
     allowedActions: ["VIEW_TRANSACTION", "ISSUE_REFUND"],
     transactionLimit: 10000,
+    approvalThreshold: 5000,
     dailyBudget: 50000,
     spentToday: 12000,
   },
@@ -43,6 +60,7 @@ const agents: FinancialAgent[] = [
     status: "ACTIVE",
     allowedActions: ["BOOK_FLIGHT", "BOOK_HOTEL"],
     transactionLimit: 25000,
+    approvalThreshold: 15000,
     dailyBudget: 100000,
     spentToday: 30000,
   },
@@ -53,10 +71,74 @@ const agents: FinancialAgent[] = [
     status: "PAUSED",
     allowedActions: ["WAIVE_FEE", "REPLACE_CARD"],
     transactionLimit: 5000,
+    approvalThreshold: 2500,
     dailyBudget: 20000,
     spentToday: 4000,
   },
 ];
+
+function evaluateAction(
+  request: ActionRequest,
+  agent: FinancialAgent,
+): PolicyDecision {
+  if (agent.status === "REVOKED") {
+    return {
+      status: "DENIED",
+      reason: "This agent has been revoked and cannot perform any action.",
+      policyCode: "AGENT_REVOKED",
+    };
+  }
+
+  if (agent.status === "PAUSED") {
+    return {
+      status: "DENIED",
+      reason: "This agent is currently paused.",
+      policyCode: "AGENT_PAUSED",
+    };
+  }
+
+  if (!agent.allowedActions.includes(request.action)) {
+    return {
+      status: "DENIED",
+      reason: `The agent does not have permission to perform ${request.action}.`,
+      policyCode: "ACTION_NOT_PERMITTED",
+    };
+  }
+
+  if (request.amount > agent.transactionLimit) {
+    return {
+      status: "DENIED",
+      reason: `The requested amount exceeds the ₹${agent.transactionLimit.toLocaleString(
+        "en-IN",
+      )} transaction limit.`,
+      policyCode: "TRANSACTION_LIMIT_EXCEEDED",
+    };
+  }
+
+  if (agent.spentToday + request.amount > agent.dailyBudget) {
+    return {
+      status: "DENIED",
+      reason: "The action would exceed the agent's remaining daily budget.",
+      policyCode: "DAILY_BUDGET_EXCEEDED",
+    };
+  }
+
+  if (request.amount > agent.approvalThreshold) {
+    return {
+      status: "APPROVAL_REQUIRED",
+      reason: `Actions above ₹${agent.approvalThreshold.toLocaleString(
+        "en-IN",
+      )} require supervisor approval.`,
+      policyCode: "SUPERVISOR_APPROVAL_REQUIRED",
+    };
+  }
+
+  return {
+    status: "ALLOWED",
+    reason: "The action satisfies all active governance policies.",
+    policyCode: "ALL_POLICIES_PASSED",
+  };
+}
 
 app.get("/health", (_request: Request, response: Response) => {
   response.status(200).json({
@@ -71,6 +153,82 @@ app.get("/api/agents", (_request: Request, response: Response) => {
     data: agents,
   });
 });
+
+app.post(
+  "/api/actions/evaluate",
+  (request: Request, response: Response) => {
+    const body = request.body as Partial<ActionRequest>;
+
+    if (
+      typeof body.agentId !== "string" ||
+      typeof body.action !== "string" ||
+      typeof body.amount !== "number"
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "agentId, action and amount are required.",
+      });
+
+      return;
+    }
+
+    if (!Number.isFinite(body.amount) || body.amount < 0) {
+      response.status(400).json({
+        success: false,
+        message: "Amount must be a valid non-negative number.",
+      });
+
+      return;
+    }
+
+    const agent = agents.find(
+      (currentAgent) => currentAgent.id === body.agentId,
+    );
+
+    if (!agent) {
+      response.status(404).json({
+        success: false,
+        message: "Agent not found.",
+      });
+
+      return;
+    }
+
+    const actionRequest: ActionRequest = {
+      agentId: body.agentId,
+      action: body.action,
+      amount: body.amount,
+      customerId: body.customerId,
+    };
+
+    const budgetBefore = agent.spentToday;
+    const decision = evaluateAction(actionRequest, agent);
+
+    if (decision.status === "ALLOWED") {
+      agent.spentToday += actionRequest.amount;
+    }
+
+    response.status(200).json({
+      success: true,
+      data: {
+        request: actionRequest,
+        decision,
+        agent: {
+          id: agent.id,
+          name: agent.name,
+          status: agent.status,
+        },
+        budget: {
+          dailyBudget: agent.dailyBudget,
+          spentBefore: budgetBefore,
+          spentAfter: agent.spentToday,
+          remainingBudget: agent.dailyBudget - agent.spentToday,
+        },
+        evaluatedAt: new Date().toISOString(),
+      },
+    });
+  },
+);
 
 app.use((_request: Request, response: Response) => {
   response.status(404).json({
