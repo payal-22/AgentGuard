@@ -16,6 +16,10 @@ type FinancialAgent = {
   dailyBudget: number;
   spentToday: number;
 };
+const systemState: SystemState = {
+  emergencyStop: false,
+  updatedAt: new Date().toISOString(),
+};
 
 type ActionRequest = {
   agentId: string;
@@ -28,6 +32,10 @@ type PolicyDecision = {
   status: DecisionStatus;
   reason: string;
   policyCode: string;
+};
+type SystemState = {
+  emergencyStop: boolean;
+  updatedAt: string;
 };
 
 const app = express();
@@ -81,6 +89,14 @@ function evaluateAction(
   request: ActionRequest,
   agent: FinancialAgent,
 ): PolicyDecision {
+    if (systemState.emergencyStop) {
+    return {
+      status: "DENIED",
+      reason:
+        "The fleet-wide emergency stop is active. All agent actions are blocked.",
+      policyCode: "EMERGENCY_STOP_ACTIVE",
+    };
+  }
   if (agent.status === "REVOKED") {
     return {
       status: "DENIED",
@@ -153,7 +169,96 @@ app.get("/api/agents", (_request: Request, response: Response) => {
     data: agents,
   });
 });
+app.patch(
+  "/api/agents/:agentId/status",
+  (request: Request, response: Response) => {
+    const agentId = request.params.agentId;
+    const body = request.body as {
+      status?: AgentStatus;
+    };
 
+    const validStatuses: AgentStatus[] = [
+      "ACTIVE",
+      "PAUSED",
+      "REVOKED",
+    ];
+
+    if (
+      typeof body.status !== "string" ||
+      !validStatuses.includes(body.status)
+    ) {
+      response.status(400).json({
+        success: false,
+        message:
+          "Status must be ACTIVE, PAUSED or REVOKED.",
+      });
+
+      return;
+    }
+
+    const agent = agents.find(
+      (currentAgent) => currentAgent.id === agentId,
+    );
+
+    if (!agent) {
+      response.status(404).json({
+        success: false,
+        message: "Agent not found.",
+      });
+
+      return;
+    }
+
+    const previousStatus = agent.status;
+    agent.status = body.status;
+
+    response.status(200).json({
+      success: true,
+      data: {
+        agent,
+        previousStatus,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+  },
+);
+app.get(
+  "/api/system/status",
+  (_request: Request, response: Response) => {
+    response.status(200).json({
+      success: true,
+      data: systemState,
+    });
+  },
+);
+
+app.post(
+  "/api/system/emergency-stop",
+  (_request: Request, response: Response) => {
+    systemState.emergencyStop = true;
+    systemState.updatedAt = new Date().toISOString();
+
+    response.status(200).json({
+      success: true,
+      message: "Fleet-wide emergency stop activated.",
+      data: systemState,
+    });
+  },
+);
+
+app.post(
+  "/api/system/resume",
+  (_request: Request, response: Response) => {
+    systemState.emergencyStop = false;
+    systemState.updatedAt = new Date().toISOString();
+
+    response.status(200).json({
+      success: true,
+      message: "Agent operations resumed.",
+      data: systemState,
+    });
+  },
+);
 app.post(
   "/api/actions/evaluate",
   (request: Request, response: Response) => {

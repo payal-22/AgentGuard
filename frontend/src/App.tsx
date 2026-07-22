@@ -52,6 +52,15 @@ type EvaluationResponse = {
     evaluatedAt: string;
   };
 };
+type SystemStatus = {
+  emergencyStop: boolean;
+  updatedAt: string;
+};
+
+type SystemStatusResponse = {
+  success: boolean;
+  data: SystemStatus;
+};
 
 const API_URL = import.meta.env.VITE_API_URL as string;
 
@@ -87,11 +96,35 @@ async function fetchAgents(): Promise<FinancialAgent[]> {
 
   return result.data;
 }
+async function fetchSystemStatus(): Promise<SystemStatus> {
+  const response = await fetch(`${API_URL}/api/system/status`);
+
+  if (!response.ok) {
+    throw new Error(
+      `Unable to load system status. Status: ${response.status}`,
+    );
+  }
+
+  const result =
+    (await response.json()) as SystemStatusResponse;
+
+  if (!result.success) {
+    throw new Error("The API could not return system status.");
+  }
+
+  return result.data;
+}
 
 function App() {
   const [agents, setAgents] = useState<FinancialAgent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  
+  const [systemStatus, setSystemStatus] =
+  useState<SystemStatus | null>(null);
+
+const [controlError, setControlError] = useState("");
+const [isControlLoading, setIsControlLoading] = useState(false);
 
   const [selectedAgentId, setSelectedAgentId] =
     useState("refund-agent");
@@ -117,10 +150,11 @@ function App() {
   useEffect(() => {
   let isCancelled = false;
 
-  fetchAgents()
-    .then((agentData) => {
+  Promise.all([fetchAgents(), fetchSystemStatus()])
+    .then(([agentData, statusData]) => {
       if (!isCancelled) {
         setAgents(agentData);
+        setSystemStatus(statusData);
       }
     })
     .catch((error: unknown) => {
@@ -155,6 +189,111 @@ function App() {
       setSelectedAction(newAgent.allowedActions[0]);
     }
   }
+  async function refreshDashboard(): Promise<void> {
+  const [agentData, statusData] = await Promise.all([
+    fetchAgents(),
+    fetchSystemStatus(),
+  ]);
+
+  setAgents(agentData);
+  setSystemStatus(statusData);
+}
+
+async function changeAgentStatus(
+  agentId: string,
+  status: AgentStatus,
+): Promise<void> {
+  try {
+    setIsControlLoading(true);
+    setControlError("");
+
+    const response = await fetch(
+      `${API_URL}/api/agents/${agentId}/status`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          status,
+        }),
+      },
+    );
+
+    const result = (await response.json()) as {
+      success: boolean;
+      message?: string;
+    };
+
+    if (!response.ok || !result.success) {
+      throw new Error(
+        result.message ?? "Unable to update agent status.",
+      );
+    }
+
+    await refreshDashboard();
+    setEvaluationResult(null);
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "An unexpected error occurred.";
+
+    setControlError(message);
+  } finally {
+    setIsControlLoading(false);
+  }
+}
+
+async function changeEmergencyStop(
+  shouldStop: boolean,
+): Promise<void> {
+  const confirmed = shouldStop
+    ? window.confirm(
+        "Activate the fleet-wide emergency stop? All agents will be blocked.",
+      )
+    : true;
+
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    setIsControlLoading(true);
+    setControlError("");
+
+    const endpoint = shouldStop
+      ? "/api/system/emergency-stop"
+      : "/api/system/resume";
+
+    const response = await fetch(`${API_URL}${endpoint}`, {
+      method: "POST",
+    });
+
+    const result = (await response.json()) as {
+      success: boolean;
+      message?: string;
+    };
+
+    if (!response.ok || !result.success) {
+      throw new Error(
+        result.message ?? "Unable to update system status.",
+      );
+    }
+
+    await refreshDashboard();
+    setEvaluationResult(null);
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "An unexpected error occurred.";
+
+    setControlError(message);
+  } finally {
+    setIsControlLoading(false);
+  }
+}
 
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
@@ -244,10 +383,25 @@ function App() {
           </p>
         </div>
 
-        <div className="system-status">
-          <span className="status-dot" />
-          System operational
-        </div>
+        <div
+  className={`system-status ${
+    systemStatus?.emergencyStop
+      ? "system-status-stopped"
+      : ""
+  }`}
+>
+  <span
+    className={`status-dot ${
+      systemStatus?.emergencyStop
+        ? "status-dot-stopped"
+        : ""
+    }`}
+  />
+
+  {systemStatus?.emergencyStop
+    ? "Emergency stop active"
+    : "System operational"}
+</div>
       </header>
 
       <section className="metrics-grid">
@@ -281,6 +435,62 @@ function App() {
           </strong>
         </article>
       </section>
+      <section
+  className={`emergency-panel ${
+    systemStatus?.emergencyStop
+      ? "emergency-panel-active"
+      : ""
+  }`}
+>
+  <div>
+    <span className="emergency-eyebrow">
+      Fleet safety control
+    </span>
+
+    <h2>
+      {systemStatus?.emergencyStop
+        ? "All financial agents are stopped"
+        : "Agent fleet is operational"}
+    </h2>
+
+    <p>
+      {systemStatus?.emergencyStop
+        ? "Every new financial action will be denied until operations are resumed."
+        : "Use the emergency stop only when the agent fleet presents an immediate risk."}
+    </p>
+  </div>
+
+  {systemStatus?.emergencyStop ? (
+    <button
+      className="resume-button"
+      type="button"
+      disabled={isControlLoading}
+      onClick={() => {
+        void changeEmergencyStop(false);
+      }}
+    >
+      Resume All Agents
+    </button>
+  ) : (
+    <button
+      className="emergency-button"
+      type="button"
+      disabled={isControlLoading}
+      onClick={() => {
+        void changeEmergencyStop(true);
+      }}
+    >
+      Emergency Stop
+    </button>
+  )}
+</section>
+
+{controlError && (
+  <div className="message-card error-card control-error">
+    <strong>Control action failed</strong>
+    <span>{controlError}</span>
+  </div>
+)}
 
       <section className="simulator-section">
         <div className="section-heading">
@@ -622,6 +832,52 @@ function App() {
                       ))}
                     </div>
                   </div>
+                  <div className="agent-controls">
+  {agent.status !== "ACTIVE" && (
+    <button
+      className="control-button activate-button"
+      type="button"
+      disabled={isControlLoading}
+      onClick={() => {
+        void changeAgentStatus(agent.id, "ACTIVE");
+      }}
+    >
+      Activate
+    </button>
+  )}
+
+  {agent.status === "ACTIVE" && (
+    <button
+      className="control-button pause-button"
+      type="button"
+      disabled={isControlLoading}
+      onClick={() => {
+        void changeAgentStatus(agent.id, "PAUSED");
+      }}
+    >
+      Pause
+    </button>
+  )}
+
+  {agent.status !== "REVOKED" && (
+    <button
+      className="control-button revoke-button"
+      type="button"
+      disabled={isControlLoading}
+      onClick={() => {
+        const confirmed = window.confirm(
+          `Revoke ${agent.name}? Its actions will be blocked immediately.`,
+        );
+
+        if (confirmed) {
+          void changeAgentStatus(agent.id, "REVOKED");
+        }
+      }}
+    >
+      Revoke
+    </button>
+  )}
+</div>
                 </article>
               );
             })}
