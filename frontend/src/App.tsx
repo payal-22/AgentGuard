@@ -61,6 +61,26 @@ type SystemStatusResponse = {
   success: boolean;
   data: SystemStatus;
 };
+type AuditCategory =
+  "ACTION_EVALUATION" | "AGENT_STATUS_CHANGE" | "SYSTEM_CONTROL";
+
+type AuditEvent = {
+  id: string;
+  category: AuditCategory;
+  actor: string;
+  agentId?: string;
+  agentName?: string;
+  action?: string;
+  amount?: number;
+  outcome: string;
+  message: string;
+  createdAt: string;
+};
+
+type AuditEventsResponse = {
+  success: boolean;
+  data: AuditEvent[];
+};
 
 const API_URL = import.meta.env.VITE_API_URL as string;
 
@@ -74,6 +94,21 @@ function formatCurrency(amount: number): string {
 
 function formatActionName(action: string): string {
   return action
+    .split("_")
+    .map((word) => {
+      return word.charAt(0) + word.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+function formatDateTime(value: string): string {
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function formatAuditCategory(category: AuditCategory): string {
+  return category
     .split("_")
     .map((word) => {
       return word.charAt(0) + word.slice(1).toLowerCase();
@@ -100,13 +135,10 @@ async function fetchSystemStatus(): Promise<SystemStatus> {
   const response = await fetch(`${API_URL}/api/system/status`);
 
   if (!response.ok) {
-    throw new Error(
-      `Unable to load system status. Status: ${response.status}`,
-    );
+    throw new Error(`Unable to load system status. Status: ${response.status}`);
   }
 
-  const result =
-    (await response.json()) as SystemStatusResponse;
+  const result = (await response.json()) as SystemStatusResponse;
 
   if (!result.success) {
     throw new Error("The API could not return system status.");
@@ -114,23 +146,37 @@ async function fetchSystemStatus(): Promise<SystemStatus> {
 
   return result.data;
 }
+async function fetchAuditEvents(): Promise<AuditEvent[]> {
+  const response = await fetch(`${API_URL}/api/audit-events?limit=20`);
+
+  if (!response.ok) {
+    throw new Error(`Unable to load audit events. Status: ${response.status}`);
+  }
+
+  const result = (await response.json()) as AuditEventsResponse;
+
+  if (!result.success) {
+    throw new Error("The API could not return audit events.");
+  }
+
+  return result.data;
+}
 
 function App() {
   const [agents, setAgents] = useState<FinancialAgent[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  
-  const [systemStatus, setSystemStatus] =
-  useState<SystemStatus | null>(null);
 
-const [controlError, setControlError] = useState("");
-const [isControlLoading, setIsControlLoading] = useState(false);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
 
-  const [selectedAgentId, setSelectedAgentId] =
-    useState("refund-agent");
+  const [controlError, setControlError] = useState("");
+  const [isControlLoading, setIsControlLoading] = useState(false);
 
-  const [selectedAction, setSelectedAction] =
-    useState("ISSUE_REFUND");
+  const [selectedAgentId, setSelectedAgentId] = useState("refund-agent");
+
+  const [selectedAction, setSelectedAction] = useState("ISSUE_REFUND");
 
   const [amount, setAmount] = useState("2000");
   const [customerId, setCustomerId] = useState("CM-1001");
@@ -138,45 +184,43 @@ const [isControlLoading, setIsControlLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [evaluationError, setEvaluationError] = useState("");
 
-  const [evaluationResult, setEvaluationResult] =
-    useState<EvaluationResponse["data"] | null>(null);
+  const [evaluationResult, setEvaluationResult] = useState<
+    EvaluationResponse["data"] | null
+  >(null);
 
-  const selectedAgent = agents.find(
-    (agent) => agent.id === selectedAgentId,
-  );
-
-  
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
 
   useEffect(() => {
-  let isCancelled = false;
+    let isCancelled = false;
 
-  Promise.all([fetchAgents(), fetchSystemStatus()])
-    .then(([agentData, statusData]) => {
-      if (!isCancelled) {
-        setAgents(agentData);
-        setSystemStatus(statusData);
-      }
-    })
-    .catch((error: unknown) => {
-      if (!isCancelled) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : "An unexpected error occurred.";
+    Promise.all([fetchAgents(), fetchSystemStatus(), fetchAuditEvents()])
+      .then(([agentData, statusData, auditData]) => {
+        if (!isCancelled) {
+          setAgents(agentData);
+          setSystemStatus(statusData);
+          setAuditEvents(auditData);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!isCancelled) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "An unexpected error occurred.";
 
-        setLoadError(message);
-      }
-    })
-    .finally(() => {
-      if (!isCancelled) {
-        setIsLoading(false);
-      }
-    });
+          setLoadError(message);
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsLoading(false);
+        }
+      });
 
-  return () => {
-    isCancelled = true;
-  };
-}, []);
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   function handleAgentChange(agentId: string): void {
     setSelectedAgentId(agentId);
@@ -190,26 +234,26 @@ const [isControlLoading, setIsControlLoading] = useState(false);
     }
   }
   async function refreshDashboard(): Promise<void> {
-  const [agentData, statusData] = await Promise.all([
-    fetchAgents(),
-    fetchSystemStatus(),
-  ]);
+    const [agentData, statusData, auditData] = await Promise.all([
+      fetchAgents(),
+      fetchSystemStatus(),
+      fetchAuditEvents(),
+    ]);
 
-  setAgents(agentData);
-  setSystemStatus(statusData);
-}
+    setAgents(agentData);
+    setSystemStatus(statusData);
+    setAuditEvents(auditData);
+  }
 
-async function changeAgentStatus(
-  agentId: string,
-  status: AgentStatus,
-): Promise<void> {
-  try {
-    setIsControlLoading(true);
-    setControlError("");
+  async function changeAgentStatus(
+    agentId: string,
+    status: AgentStatus,
+  ): Promise<void> {
+    try {
+      setIsControlLoading(true);
+      setControlError("");
 
-    const response = await fetch(
-      `${API_URL}/api/agents/${agentId}/status`,
-      {
+      const response = await fetch(`${API_URL}/api/agents/${agentId}/status`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -217,83 +261,76 @@ async function changeAgentStatus(
         body: JSON.stringify({
           status,
         }),
-      },
-    );
+      });
 
-    const result = (await response.json()) as {
-      success: boolean;
-      message?: string;
-    };
+      const result = (await response.json()) as {
+        success: boolean;
+        message?: string;
+      };
 
-    if (!response.ok || !result.success) {
-      throw new Error(
-        result.message ?? "Unable to update agent status.",
-      );
+      if (!response.ok || !result.success) {
+        throw new Error(result.message ?? "Unable to update agent status.");
+      }
+
+      await refreshDashboard();
+      setEvaluationResult(null);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred.";
+
+      setControlError(message);
+    } finally {
+      setIsControlLoading(false);
+    }
+  }
+
+  async function changeEmergencyStop(shouldStop: boolean): Promise<void> {
+    const confirmed = shouldStop
+      ? window.confirm(
+          "Activate the fleet-wide emergency stop? All agents will be blocked.",
+        )
+      : true;
+
+    if (!confirmed) {
+      return;
     }
 
-    await refreshDashboard();
-    setEvaluationResult(null);
-  } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "An unexpected error occurred.";
+    try {
+      setIsControlLoading(true);
+      setControlError("");
 
-    setControlError(message);
-  } finally {
-    setIsControlLoading(false);
-  }
-}
+      const endpoint = shouldStop
+        ? "/api/system/emergency-stop"
+        : "/api/system/resume";
 
-async function changeEmergencyStop(
-  shouldStop: boolean,
-): Promise<void> {
-  const confirmed = shouldStop
-    ? window.confirm(
-        "Activate the fleet-wide emergency stop? All agents will be blocked.",
-      )
-    : true;
+      const response = await fetch(`${API_URL}${endpoint}`, {
+        method: "POST",
+      });
 
-  if (!confirmed) {
-    return;
-  }
+      const result = (await response.json()) as {
+        success: boolean;
+        message?: string;
+      };
 
-  try {
-    setIsControlLoading(true);
-    setControlError("");
+      if (!response.ok || !result.success) {
+        throw new Error(result.message ?? "Unable to update system status.");
+      }
 
-    const endpoint = shouldStop
-      ? "/api/system/emergency-stop"
-      : "/api/system/resume";
+      await refreshDashboard();
+      setEvaluationResult(null);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred.";
 
-    const response = await fetch(`${API_URL}${endpoint}`, {
-      method: "POST",
-    });
-
-    const result = (await response.json()) as {
-      success: boolean;
-      message?: string;
-    };
-
-    if (!response.ok || !result.success) {
-      throw new Error(
-        result.message ?? "Unable to update system status.",
-      );
+      setControlError(message);
+    } finally {
+      setIsControlLoading(false);
     }
-
-    await refreshDashboard();
-    setEvaluationResult(null);
-  } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : "An unexpected error occurred.";
-
-    setControlError(message);
-  } finally {
-    setIsControlLoading(false);
   }
-}
 
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
@@ -322,21 +359,18 @@ async function changeEmergencyStop(
       setEvaluationError("");
       setEvaluationResult(null);
 
-      const response = await fetch(
-        `${API_URL}/api/actions/evaluate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            agentId: selectedAgentId,
-            action: selectedAction,
-            amount: numericAmount,
-            customerId: customerId.trim() || undefined,
-          }),
+      const response = await fetch(`${API_URL}/api/actions/evaluate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify({
+          agentId: selectedAgentId,
+          action: selectedAction,
+          amount: numericAmount,
+          customerId: customerId.trim() || undefined,
+        }),
+      });
 
       const result = (await response.json()) as
         | EvaluationResponse
@@ -356,8 +390,7 @@ async function changeEmergencyStop(
 
       setEvaluationResult(result.data);
 
-      const updatedAgents = await fetchAgents();
-      setAgents(updatedAgents);
+      await refreshDashboard();
     } catch (error) {
       const message =
         error instanceof Error
@@ -378,30 +411,26 @@ async function changeEmergencyStop(
           <h1>AgentGuard</h1>
 
           <p className="subtitle">
-            Monitor permissions, budgets and operational status for
-            autonomous financial agents.
+            Monitor permissions, budgets and operational status for autonomous
+            financial agents.
           </p>
         </div>
 
         <div
-  className={`system-status ${
-    systemStatus?.emergencyStop
-      ? "system-status-stopped"
-      : ""
-  }`}
->
-  <span
-    className={`status-dot ${
-      systemStatus?.emergencyStop
-        ? "status-dot-stopped"
-        : ""
-    }`}
-  />
+          className={`system-status ${
+            systemStatus?.emergencyStop ? "system-status-stopped" : ""
+          }`}
+        >
+          <span
+            className={`status-dot ${
+              systemStatus?.emergencyStop ? "status-dot-stopped" : ""
+            }`}
+          />
 
-  {systemStatus?.emergencyStop
-    ? "Emergency stop active"
-    : "System operational"}
-</div>
+          {systemStatus?.emergencyStop
+            ? "Emergency stop active"
+            : "System operational"}
+        </div>
       </header>
 
       <section className="metrics-grid">
@@ -414,11 +443,7 @@ async function changeEmergencyStop(
           <span>Active Agents</span>
 
           <strong>
-            {
-              agents.filter(
-                (agent) => agent.status === "ACTIVE",
-              ).length
-            }
+            {agents.filter((agent) => agent.status === "ACTIVE").length}
           </strong>
         </article>
 
@@ -427,70 +452,63 @@ async function changeEmergencyStop(
 
           <strong>
             {formatCurrency(
-              agents.reduce(
-                (total, agent) => total + agent.spentToday,
-                0,
-              ),
+              agents.reduce((total, agent) => total + agent.spentToday, 0),
             )}
           </strong>
         </article>
       </section>
       <section
-  className={`emergency-panel ${
-    systemStatus?.emergencyStop
-      ? "emergency-panel-active"
-      : ""
-  }`}
->
-  <div>
-    <span className="emergency-eyebrow">
-      Fleet safety control
-    </span>
+        className={`emergency-panel ${
+          systemStatus?.emergencyStop ? "emergency-panel-active" : ""
+        }`}
+      >
+        <div>
+          <span className="emergency-eyebrow">Fleet safety control</span>
 
-    <h2>
-      {systemStatus?.emergencyStop
-        ? "All financial agents are stopped"
-        : "Agent fleet is operational"}
-    </h2>
+          <h2>
+            {systemStatus?.emergencyStop
+              ? "All financial agents are stopped"
+              : "Agent fleet is operational"}
+          </h2>
 
-    <p>
-      {systemStatus?.emergencyStop
-        ? "Every new financial action will be denied until operations are resumed."
-        : "Use the emergency stop only when the agent fleet presents an immediate risk."}
-    </p>
-  </div>
+          <p>
+            {systemStatus?.emergencyStop
+              ? "Every new financial action will be denied until operations are resumed."
+              : "Use the emergency stop only when the agent fleet presents an immediate risk."}
+          </p>
+        </div>
 
-  {systemStatus?.emergencyStop ? (
-    <button
-      className="resume-button"
-      type="button"
-      disabled={isControlLoading}
-      onClick={() => {
-        void changeEmergencyStop(false);
-      }}
-    >
-      Resume All Agents
-    </button>
-  ) : (
-    <button
-      className="emergency-button"
-      type="button"
-      disabled={isControlLoading}
-      onClick={() => {
-        void changeEmergencyStop(true);
-      }}
-    >
-      Emergency Stop
-    </button>
-  )}
-</section>
+        {systemStatus?.emergencyStop ? (
+          <button
+            className="resume-button"
+            type="button"
+            disabled={isControlLoading}
+            onClick={() => {
+              void changeEmergencyStop(false);
+            }}
+          >
+            Resume All Agents
+          </button>
+        ) : (
+          <button
+            className="emergency-button"
+            type="button"
+            disabled={isControlLoading}
+            onClick={() => {
+              void changeEmergencyStop(true);
+            }}
+          >
+            Emergency Stop
+          </button>
+        )}
+      </section>
 
-{controlError && (
-  <div className="message-card error-card control-error">
-    <strong>Control action failed</strong>
-    <span>{controlError}</span>
-  </div>
-)}
+      {controlError && (
+        <div className="message-card error-card control-error">
+          <strong>Control action failed</strong>
+          <span>{controlError}</span>
+        </div>
+      )}
 
       <section className="simulator-section">
         <div className="section-heading">
@@ -498,8 +516,8 @@ async function changeEmergencyStop(
             <h2>Agent Simulator</h2>
 
             <p>
-              Submit a financial action and evaluate it against the
-              active governance policies.
+              Submit a financial action and evaluate it against the active
+              governance policies.
             </p>
           </div>
         </div>
@@ -581,9 +599,7 @@ async function changeEmergencyStop(
                   <span>Transaction limit</span>
 
                   <strong>
-                    {formatCurrency(
-                      selectedAgent.transactionLimit,
-                    )}
+                    {formatCurrency(selectedAgent.transactionLimit)}
                   </strong>
                 </div>
 
@@ -591,9 +607,7 @@ async function changeEmergencyStop(
                   <span>Approval above</span>
 
                   <strong>
-                    {formatCurrency(
-                      selectedAgent.approvalThreshold,
-                    )}
+                    {formatCurrency(selectedAgent.approvalThreshold)}
                   </strong>
                 </div>
 
@@ -602,8 +616,7 @@ async function changeEmergencyStop(
 
                   <strong>
                     {formatCurrency(
-                      selectedAgent.dailyBudget -
-                        selectedAgent.spentToday,
+                      selectedAgent.dailyBudget - selectedAgent.spentToday,
                     )}
                   </strong>
                 </div>
@@ -619,9 +632,7 @@ async function changeEmergencyStop(
               type="submit"
               disabled={isSubmitting || agents.length === 0}
             >
-              {isSubmitting
-                ? "Evaluating action..."
-                : "Evaluate Action"}
+              {isSubmitting ? "Evaluating action..." : "Evaluate Action"}
             </button>
           </form>
 
@@ -633,8 +644,7 @@ async function changeEmergencyStop(
                 <h3>No action evaluated yet</h3>
 
                 <p>
-                  Select an agent, action and amount to see the policy
-                  decision.
+                  Select an agent, action and amount to see the policy decision.
                 </p>
               </div>
             )}
@@ -645,16 +655,9 @@ async function changeEmergencyStop(
                   .toLowerCase()
                   .replaceAll("_", "-")}`}
               >
-                <span className="decision-label">
-                  Policy decision
-                </span>
+                <span className="decision-label">Policy decision</span>
 
-                <h3>
-                  {evaluationResult.decision.status.replaceAll(
-                    "_",
-                    " ",
-                  )}
-                </h3>
+                <h3>{evaluationResult.decision.status.replaceAll("_", " ")}</h3>
 
                 <p>{evaluationResult.decision.reason}</p>
 
@@ -667,43 +670,33 @@ async function changeEmergencyStop(
                   <div>
                     <span>Action</span>
                     <strong>
-                      {formatActionName(
-                        evaluationResult.request.action,
-                      )}
+                      {formatActionName(evaluationResult.request.action)}
                     </strong>
                   </div>
 
                   <div>
                     <span>Amount</span>
                     <strong>
-                      {formatCurrency(
-                        evaluationResult.request.amount,
-                      )}
+                      {formatCurrency(evaluationResult.request.amount)}
                     </strong>
                   </div>
 
                   <div>
                     <span>Policy code</span>
-                    <strong>
-                      {evaluationResult.decision.policyCode}
-                    </strong>
+                    <strong>{evaluationResult.decision.policyCode}</strong>
                   </div>
 
                   <div>
                     <span>Spend before</span>
                     <strong>
-                      {formatCurrency(
-                        evaluationResult.budget.spentBefore,
-                      )}
+                      {formatCurrency(evaluationResult.budget.spentBefore)}
                     </strong>
                   </div>
 
                   <div>
                     <span>Spend after</span>
                     <strong>
-                      {formatCurrency(
-                        evaluationResult.budget.spentAfter,
-                      )}
+                      {formatCurrency(evaluationResult.budget.spentAfter)}
                     </strong>
                   </div>
                 </div>
@@ -718,16 +711,11 @@ async function changeEmergencyStop(
           <div>
             <h2>Managed Agents</h2>
 
-            <p>
-              Current governance configuration for each financial
-              agent.
-            </p>
+            <p>Current governance configuration for each financial agent.</p>
           </div>
         </div>
 
-        {isLoading && (
-          <div className="message-card">Loading agents…</div>
-        )}
+        {isLoading && <div className="message-card">Loading agents…</div>}
 
         {loadError && (
           <div className="message-card error-card">
@@ -740,9 +728,7 @@ async function changeEmergencyStop(
           <div className="agent-grid">
             {agents.map((agent) => {
               const budgetPercentage = Math.min(
-                Math.round(
-                  (agent.spentToday / agent.dailyBudget) * 100,
-                ),
+                Math.round((agent.spentToday / agent.dailyBudget) * 100),
                 100,
               );
 
@@ -765,35 +751,25 @@ async function changeEmergencyStop(
                     <div>
                       <span>Transaction limit</span>
 
-                      <strong>
-                        {formatCurrency(agent.transactionLimit)}
-                      </strong>
+                      <strong>{formatCurrency(agent.transactionLimit)}</strong>
                     </div>
 
                     <div>
                       <span>Approval threshold</span>
 
-                      <strong>
-                        {formatCurrency(
-                          agent.approvalThreshold,
-                        )}
-                      </strong>
+                      <strong>{formatCurrency(agent.approvalThreshold)}</strong>
                     </div>
 
                     <div>
                       <span>Daily budget</span>
 
-                      <strong>
-                        {formatCurrency(agent.dailyBudget)}
-                      </strong>
+                      <strong>{formatCurrency(agent.dailyBudget)}</strong>
                     </div>
 
                     <div>
                       <span>Spent today</span>
 
-                      <strong>
-                        {formatCurrency(agent.spentToday)}
-                      </strong>
+                      <strong>{formatCurrency(agent.spentToday)}</strong>
                     </div>
                   </div>
 
@@ -823,64 +799,134 @@ async function changeEmergencyStop(
 
                     <div className="permission-list">
                       {agent.allowedActions.map((action) => (
-                        <span
-                          className="permission-chip"
-                          key={action}
-                        >
+                        <span className="permission-chip" key={action}>
                           {formatActionName(action)}
                         </span>
                       ))}
                     </div>
                   </div>
                   <div className="agent-controls">
-  {agent.status !== "ACTIVE" && (
-    <button
-      className="control-button activate-button"
-      type="button"
-      disabled={isControlLoading}
-      onClick={() => {
-        void changeAgentStatus(agent.id, "ACTIVE");
-      }}
-    >
-      Activate
-    </button>
-  )}
+                    {agent.status !== "ACTIVE" && (
+                      <button
+                        className="control-button activate-button"
+                        type="button"
+                        disabled={isControlLoading}
+                        onClick={() => {
+                          void changeAgentStatus(agent.id, "ACTIVE");
+                        }}
+                      >
+                        Activate
+                      </button>
+                    )}
 
-  {agent.status === "ACTIVE" && (
-    <button
-      className="control-button pause-button"
-      type="button"
-      disabled={isControlLoading}
-      onClick={() => {
-        void changeAgentStatus(agent.id, "PAUSED");
-      }}
-    >
-      Pause
-    </button>
-  )}
+                    {agent.status === "ACTIVE" && (
+                      <button
+                        className="control-button pause-button"
+                        type="button"
+                        disabled={isControlLoading}
+                        onClick={() => {
+                          void changeAgentStatus(agent.id, "PAUSED");
+                        }}
+                      >
+                        Pause
+                      </button>
+                    )}
 
-  {agent.status !== "REVOKED" && (
-    <button
-      className="control-button revoke-button"
-      type="button"
-      disabled={isControlLoading}
-      onClick={() => {
-        const confirmed = window.confirm(
-          `Revoke ${agent.name}? Its actions will be blocked immediately.`,
-        );
+                    {agent.status !== "REVOKED" && (
+                      <button
+                        className="control-button revoke-button"
+                        type="button"
+                        disabled={isControlLoading}
+                        onClick={() => {
+                          const confirmed = window.confirm(
+                            `Revoke ${agent.name}? Its actions will be blocked immediately.`,
+                          );
 
-        if (confirmed) {
-          void changeAgentStatus(agent.id, "REVOKED");
-        }
-      }}
-    >
-      Revoke
-    </button>
-  )}
-</div>
+                          if (confirmed) {
+                            void changeAgentStatus(agent.id, "REVOKED");
+                          }
+                        }}
+                      >
+                        Revoke
+                      </button>
+                    )}
+                  </div>
                 </article>
               );
             })}
+          </div>
+        )}
+      </section>
+      <section className="audit-section">
+        <div className="section-heading">
+          <div>
+            <h2>Governance Audit Trail</h2>
+
+            <p>
+              Chronological evidence of policy decisions and operational control
+              changes.
+            </p>
+          </div>
+
+          <span className="audit-count">
+            {auditEvents.length} recent events
+          </span>
+        </div>
+
+        {auditEvents.length === 0 ? (
+          <div className="message-card">
+            No audit events have been recorded yet.
+          </div>
+        ) : (
+          <div className="audit-table-wrapper">
+            <table className="audit-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Event</th>
+                  <th>Agent</th>
+                  <th>Action</th>
+                  <th>Outcome</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {auditEvents.map((event) => (
+                  <tr key={event.id}>
+                    <td className="audit-time">
+                      {formatDateTime(event.createdAt)}
+                    </td>
+
+                    <td>{formatAuditCategory(event.category)}</td>
+
+                    <td>{event.agentName ?? "System"}</td>
+
+                    <td>
+                      {event.action ? formatActionName(event.action) : "—"}
+
+                      {typeof event.amount === "number" && (
+                        <span className="audit-amount">
+                          {formatCurrency(event.amount)}
+                        </span>
+                      )}
+                    </td>
+
+                    <td>
+                      <span
+                        className={`audit-outcome audit-outcome-${event.outcome
+                          .toLowerCase()
+                          .replaceAll("_", "-")}`}
+                      >
+                        {event.outcome.replaceAll("_", " ")}
+                      </span>
+                    </td>
+
+                    <td className="audit-message">{event.message}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>

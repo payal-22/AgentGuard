@@ -11,7 +11,12 @@ body {
   background: #f5f7fb;
   color: #172033;
   font-family:
-    Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    Inter,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
 }
 
 button,
@@ -505,7 +510,8 @@ h1 {
   .decision-details {
     grid-template-columns: 1fr;
   }
-}.system-status-stopped {
+}
+.system-status-stopped {
   border-color: #fecdca;
   background: #fff6f5;
   color: #b42318;
@@ -636,4 +642,111 @@ h1 {
   .resume-button {
     width: 100%;
   }
+}
+.audit-section {
+  margin-top: 48px;
+}
+
+.audit-count {
+  padding: 7px 11px;
+  border: 1px solid #dbe2ee;
+  border-radius: 999px;
+  background: white;
+  color: #475467;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.audit-table-wrapper {
+  overflow-x: auto;
+  border: 1px solid #e1e6ef;
+  border-radius: 18px;
+  background: white;
+  box-shadow: 0 8px 30px rgba(20, 33, 61, 0.04);
+}
+
+.audit-table {
+  width: 100%;
+  min-width: 950px;
+  border-collapse: collapse;
+}
+
+.audit-table th,
+.audit-table td {
+  padding: 15px 16px;
+  border-bottom: 1px solid #eef1f6;
+  text-align: left;
+  vertical-align: top;
+}
+
+.audit-table th {
+  background: #f8fafc;
+  color: #475467;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.audit-table td {
+  color: #344054;
+  font-size: 13px;
+}
+
+.audit-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.audit-table tbody tr:hover {
+  background: #fafbfc;
+}
+
+.audit-time {
+  min-width: 145px;
+  color: #667085 !important;
+  white-space: nowrap;
+}
+
+.audit-message {
+  min-width: 260px;
+  line-height: 1.5;
+}
+
+.audit-amount {
+  display: block;
+  margin-top: 4px;
+  color: #667085;
+  font-size: 12px;
+}
+
+.audit-outcome {
+  display: inline-block;
+  max-width: 210px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #f2f4f7;
+  color: #344054;
+  font-size: 11px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.audit-outcome-allowed,
+.audit-outcome-active,
+.audit-outcome-system-resumed {
+  background: #ecfdf3;
+  color: #067647;
+}
+
+.audit-outcome-denied,
+.audit-outcome-revoked,
+.audit-outcome-emergency-stop-activated {
+  background: #fff1f0;
+  color: #b42318;
+}
+
+.audit-outcome-approval-required,
+.audit-outcome-paused {
+  background: #fffaeb;
+  color: #b54708;
 }
