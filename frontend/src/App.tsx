@@ -49,6 +49,7 @@ type EvaluationResponse = {
       spentAfter: number;
       remainingBudget: number;
     };
+    approvalRequest?: ApprovalRequest;
     evaluatedAt: string;
   };
 };
@@ -62,8 +63,30 @@ type SystemStatusResponse = {
   data: SystemStatus;
 };
 type AuditCategory =
-  "ACTION_EVALUATION" | "AGENT_STATUS_CHANGE" | "SYSTEM_CONTROL";
+  | "ACTION_EVALUATION"
+  | "AGENT_STATUS_CHANGE"
+  | "SYSTEM_CONTROL"
+  | "APPROVAL_DECISION";
+type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
 
+type ApprovalRequest = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  action: string;
+  amount: number;
+  customerId?: string;
+  reason: string;
+  status: ApprovalStatus;
+  requestedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+};
+
+type ApprovalsResponse = {
+  success: boolean;
+  data: ApprovalRequest[];
+};
 type AuditEvent = {
   id: string;
   category: AuditCategory;
@@ -161,11 +184,34 @@ async function fetchAuditEvents(): Promise<AuditEvent[]> {
 
   return result.data;
 }
+async function fetchApprovals(): Promise<ApprovalRequest[]> {
+  const response = await fetch(`${API_URL}/api/approvals`);
+
+  if (!response.ok) {
+    throw new Error(`Unable to load approvals. Status: ${response.status}`);
+  }
+
+  const result = (await response.json()) as ApprovalsResponse;
+
+  if (!result.success) {
+    throw new Error("The API could not return approval requests.");
+  }
+
+  return result.data;
+}
 
 function App() {
   const [agents, setAgents] = useState<FinancialAgent[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>(
+    [],
+  );
 
+  const [approvalError, setApprovalError] = useState("");
+
+  const [reviewingApprovalId, setReviewingApprovalId] = useState<string | null>(
+    null,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
 
@@ -193,12 +239,18 @@ function App() {
   useEffect(() => {
     let isCancelled = false;
 
-    Promise.all([fetchAgents(), fetchSystemStatus(), fetchAuditEvents()])
-      .then(([agentData, statusData, auditData]) => {
+    Promise.all([
+      fetchAgents(),
+      fetchSystemStatus(),
+      fetchAuditEvents(),
+      fetchApprovals(),
+    ])
+      .then(([agentData, statusData, auditData, approvalData]) => {
         if (!isCancelled) {
           setAgents(agentData);
           setSystemStatus(statusData);
           setAuditEvents(auditData);
+          setApprovalRequests(approvalData);
         }
       })
       .catch((error: unknown) => {
@@ -234,15 +286,17 @@ function App() {
     }
   }
   async function refreshDashboard(): Promise<void> {
-    const [agentData, statusData, auditData] = await Promise.all([
+    const [agentData, statusData, auditData, approvalData] = await Promise.all([
       fetchAgents(),
       fetchSystemStatus(),
       fetchAuditEvents(),
+      fetchApprovals(),
     ]);
 
     setAgents(agentData);
     setSystemStatus(statusData);
     setAuditEvents(auditData);
+    setApprovalRequests(approvalData);
   }
 
   async function changeAgentStatus(
@@ -331,7 +385,56 @@ function App() {
       setIsControlLoading(false);
     }
   }
+  async function reviewApproval(
+    approvalId: string,
+    decision: "APPROVED" | "REJECTED",
+  ): Promise<void> {
+    const confirmed = window.confirm(
+      decision === "APPROVED"
+        ? "Approve and execute this financial action?"
+        : "Reject this financial action?",
+    );
 
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setReviewingApprovalId(approvalId);
+      setApprovalError("");
+
+      const response = await fetch(`${API_URL}/api/approvals/${approvalId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          decision,
+          reviewedBy: "Yash",
+        }),
+      });
+
+      const result = (await response.json()) as {
+        success: boolean;
+        message?: string;
+      };
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message ?? "Unable to review approval request.");
+      }
+
+      await refreshDashboard();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred.";
+
+      setApprovalError(message);
+    } finally {
+      setReviewingApprovalId(null);
+    }
+  }
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
@@ -438,7 +541,17 @@ function App() {
           <span>Total Agents</span>
           <strong>{agents.length}</strong>
         </article>
+        <article className="metric-card">
+          <span>Pending Approvals</span>
 
+          <strong>
+            {
+              approvalRequests.filter(
+                (approval) => approval.status === "PENDING",
+              ).length
+            }
+          </strong>
+        </article>
         <article className="metric-card">
           <span>Active Agents</span>
 
@@ -704,6 +817,126 @@ function App() {
             )}
           </div>
         </div>
+      </section>
+      <section className="approval-section">
+        <div className="section-heading">
+          <div>
+            <h2>Human Approval Queue</h2>
+
+            <p>
+              Review financial actions that exceeded an agent’s automatic
+              approval threshold.
+            </p>
+          </div>
+
+          <span className="approval-count">
+            {
+              approvalRequests.filter(
+                (approval) => approval.status === "PENDING",
+              ).length
+            }{" "}
+            pending
+          </span>
+        </div>
+
+        {approvalError && (
+          <div className="message-card error-card">
+            <strong>Approval action failed</strong>
+            <span>{approvalError}</span>
+          </div>
+        )}
+
+        {approvalRequests.length === 0 ? (
+          <div className="message-card">
+            No approval requests have been created yet.
+          </div>
+        ) : (
+          <div className="approval-grid">
+            {approvalRequests.map((approval) => (
+              <article className="approval-card" key={approval.id}>
+                <div className="approval-card-header">
+                  <div>
+                    <span className="approval-eyebrow">Supervisor review</span>
+
+                    <h3>{approval.agentName}</h3>
+                  </div>
+
+                  <span
+                    className={`approval-status approval-status-${approval.status.toLowerCase()}`}
+                  >
+                    {approval.status}
+                  </span>
+                </div>
+
+                <div className="approval-amount">
+                  {formatCurrency(approval.amount)}
+                </div>
+
+                <div className="approval-details">
+                  <div>
+                    <span>Action</span>
+                    <strong>{formatActionName(approval.action)}</strong>
+                  </div>
+
+                  <div>
+                    <span>Customer</span>
+                    <strong>{approval.customerId ?? "Not provided"}</strong>
+                  </div>
+
+                  <div>
+                    <span>Requested</span>
+                    <strong>{formatDateTime(approval.requestedAt)}</strong>
+                  </div>
+
+                  <div>
+                    <span>Reviewed by</span>
+                    <strong>{approval.reviewedBy ?? "Awaiting review"}</strong>
+                  </div>
+                </div>
+
+                <p className="approval-reason">{approval.reason}</p>
+
+                {approval.status === "PENDING" && (
+                  <div className="approval-actions">
+                    <button
+                      className="approval-reject-button"
+                      type="button"
+                      disabled={reviewingApprovalId !== null}
+                      onClick={() => {
+                        void reviewApproval(approval.id, "REJECTED");
+                      }}
+                    >
+                      {reviewingApprovalId === approval.id
+                        ? "Processing..."
+                        : "Reject"}
+                    </button>
+
+                    <button
+                      className="approval-approve-button"
+                      type="button"
+                      disabled={reviewingApprovalId !== null}
+                      onClick={() => {
+                        void reviewApproval(approval.id, "APPROVED");
+                      }}
+                    >
+                      {reviewingApprovalId === approval.id
+                        ? "Processing..."
+                        : "Approve & Execute"}
+                    </button>
+                  </div>
+                )}
+
+                {approval.status !== "PENDING" && (
+                  <div className="approval-completed">
+                    {approval.status === "APPROVED"
+                      ? "This action was approved and executed."
+                      : "This action was rejected and was not executed."}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <section>
