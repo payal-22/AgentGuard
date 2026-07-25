@@ -1225,6 +1225,151 @@ app.patch(
     });
   }),
 );
+app.get(
+  "/api/analytics/summary",
+  asyncHandler(async (_request, response) => {
+    const [evaluationEvents, approvalRecords] = await Promise.all([
+      prisma.auditEvent.findMany({
+        where: {
+          category: "ACTION_EVALUATION",
+        },
+
+        select: {
+          agentId: true,
+          agentName: true,
+          outcome: true,
+          amount: true,
+        },
+
+        orderBy: {
+          createdAt: "asc",
+        },
+      }),
+
+      prisma.approvalRequest.findMany({
+        select: {
+          status: true,
+        },
+      }),
+    ]);
+
+    const totalEvaluations = evaluationEvents.length;
+
+    const allowed = evaluationEvents.filter(
+      (event) => event.outcome === "ALLOWED",
+    ).length;
+
+    const denied = evaluationEvents.filter(
+      (event) => event.outcome === "DENIED",
+    ).length;
+
+    const approvalRequired = evaluationEvents.filter(
+      (event) => event.outcome === "APPROVAL_REQUIRED",
+    ).length;
+
+    const evaluatedAmount = evaluationEvents.reduce(
+      (total, event) => total + (event.amount ?? 0),
+      0,
+    );
+
+    function calculateRate(count: number): number {
+      if (totalEvaluations === 0) {
+        return 0;
+      }
+
+      return Number(((count / totalEvaluations) * 100).toFixed(1));
+    }
+
+    type AgentAnalytics = {
+      agentId: string;
+      agentName: string;
+      evaluations: number;
+      allowed: number;
+      denied: number;
+      approvalRequired: number;
+      evaluatedAmount: number;
+    };
+
+    const agentAnalytics = new Map<string, AgentAnalytics>();
+
+    for (const event of evaluationEvents) {
+      const agentId = event.agentId ?? "unknown-agent";
+
+      const existing = agentAnalytics.get(agentId) ?? {
+        agentId,
+        agentName: event.agentName ?? "Unknown Agent",
+        evaluations: 0,
+        allowed: 0,
+        denied: 0,
+        approvalRequired: 0,
+        evaluatedAmount: 0,
+      };
+
+      existing.evaluations += 1;
+      existing.evaluatedAmount += event.amount ?? 0;
+
+      if (event.outcome === "ALLOWED") {
+        existing.allowed += 1;
+      }
+
+      if (event.outcome === "DENIED") {
+        existing.denied += 1;
+      }
+
+      if (event.outcome === "APPROVAL_REQUIRED") {
+        existing.approvalRequired += 1;
+      }
+
+      agentAnalytics.set(agentId, existing);
+    }
+
+    const pendingApprovals = approvalRecords.filter(
+      (approval) => approval.status === "PENDING",
+    ).length;
+
+    const approvedApprovals = approvalRecords.filter(
+      (approval) => approval.status === "APPROVED",
+    ).length;
+
+    const rejectedApprovals = approvalRecords.filter(
+      (approval) => approval.status === "REJECTED",
+    ).length;
+
+    response.status(200).json({
+      success: true,
+
+      data: {
+        totals: {
+          evaluations: totalEvaluations,
+          allowed,
+          denied,
+          approvalRequired,
+          evaluatedAmount,
+        },
+
+        rates: {
+          allowed: calculateRate(allowed),
+          denied: calculateRate(denied),
+
+          approvalRequired: calculateRate(approvalRequired),
+        },
+
+        approvals: {
+          pending: pendingApprovals,
+          approved: approvedApprovals,
+          rejected: rejectedApprovals,
+        },
+
+        byAgent: Array.from(agentAnalytics.values()).sort(
+          (firstAgent, secondAgent) =>
+            secondAgent.evaluations - firstAgent.evaluations,
+        ),
+
+        generatedAt: new Date().toISOString(),
+      },
+    });
+  }),
+);
 
 /*
 |--------------------------------------------------------------------------

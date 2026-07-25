@@ -212,6 +212,40 @@ export async function activateEmergencyStop(): Promise<SystemState> {
   });
 }
 
+export type AnalyticsSummary = {
+  totals: {
+    evaluations: number;
+    allowed: number;
+    denied: number;
+    approvalRequired: number;
+    evaluatedAmount: number;
+  };
+
+  rates: {
+    allowed: number;
+    denied: number;
+    approvalRequired: number;
+  };
+
+  approvals: {
+    pending: number;
+    approved: number;
+    rejected: number;
+  };
+
+  byAgent: Array<{
+    agentId: string;
+    agentName: string;
+    evaluations: number;
+    allowed: number;
+    denied: number;
+    approvalRequired: number;
+    evaluatedAmount: number;
+  }>;
+
+  generatedAt: string;
+};
+
 export async function resumeSystem(): Promise<SystemState> {
   return request<SystemState>("/api/system/resume", {
     method: "POST",
@@ -229,6 +263,9 @@ export async function evaluateAgentAction(
 
 export async function fetchApprovals(): Promise<ApprovalRequest[]> {
   return request<ApprovalRequest[]>("/api/approvals");
+}
+export async function fetchAnalyticsSummary(): Promise<AnalyticsSummary> {
+  return request<AnalyticsSummary>("/api/analytics/summary");
 }
 
 export async function reviewApproval(

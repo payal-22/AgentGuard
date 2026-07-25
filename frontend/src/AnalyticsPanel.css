@@ -1,0 +1,277 @@
+.analytics-section {
+  display: grid;
+  gap: 22px;
+  margin: 34px 0;
+}
+
+.analytics-total {
+  border: 1px solid #d8e0ec;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  color: #475467;
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.analytics-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.analytics-card,
+.decision-distribution,
+.agent-analytics-card,
+.approval-analytics-card {
+  border: 1px solid #e0e7f0;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 5%);
+}
+
+.analytics-card {
+  display: grid;
+  gap: 7px;
+  min-height: 118px;
+  padding: 20px;
+}
+
+.analytics-card > span {
+  color: #667085;
+  font-size: 0.82rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.analytics-card strong {
+  color: #172033;
+  font-size: 1.85rem;
+  line-height: 1.1;
+}
+
+.analytics-card small {
+  color: #7a8699;
+  line-height: 1.4;
+}
+
+.analytics-card-allowed {
+  border-top: 4px solid #2e9f62;
+}
+
+.analytics-card-denied {
+  border-top: 4px solid #d84c4c;
+}
+
+.analytics-card-approval {
+  border-top: 4px solid #d39324;
+}
+
+.decision-distribution {
+  padding: 22px;
+}
+
+.decision-distribution-header,
+.analytics-subheading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.decision-distribution-header h3,
+.analytics-subheading h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 1rem;
+}
+
+.decision-distribution-header span,
+.analytics-subheading span {
+  color: #7a8699;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.decision-distribution-track {
+  display: flex;
+  width: 100%;
+  height: 18px;
+  margin-top: 18px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf1f6;
+}
+
+.decision-distribution-segment {
+  min-width: 0;
+  transition: width 180ms ease;
+}
+
+.distribution-allowed,
+.legend-allowed {
+  background: #2e9f62;
+}
+
+.distribution-denied,
+.legend-denied {
+  background: #d84c4c;
+}
+
+.distribution-approval,
+.legend-approval {
+  background: #d39324;
+}
+
+.analytics-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 14px;
+  color: #667085;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.analytics-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.analytics-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.analytics-lower-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 16px;
+}
+
+.agent-analytics-card,
+.approval-analytics-card {
+  padding: 22px;
+}
+
+.agent-analytics-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.agent-analytics-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px;
+  border: 1px solid #e8edf4;
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+
+.agent-analytics-row > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.agent-analytics-row strong {
+  color: #1d2939;
+}
+
+.agent-analytics-row span {
+  color: #7a8699;
+  font-size: 0.78rem;
+}
+
+.agent-decision-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.agent-decision-counts span {
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-weight: 700;
+}
+
+.agent-count-allowed {
+  background: #e9f8ef;
+  color: #247449 !important;
+}
+
+.agent-count-denied {
+  background: #fff0f0;
+  color: #a93636 !important;
+}
+
+.agent-count-approval {
+  background: #fff7e7;
+  color: #946315 !important;
+}
+
+.approval-analytics-list {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 0;
+}
+
+.approval-analytics-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #edf1f5;
+  padding: 12px 0;
+}
+
+.approval-analytics-list div:last-child {
+  border-bottom: 0;
+}
+
+.approval-analytics-list dt {
+  color: #667085;
+  font-weight: 650;
+}
+
+.approval-analytics-list dd {
+  margin: 0;
+  color: #172033;
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.analytics-empty {
+  margin: 18px 0 0;
+  color: #7a8699;
+}
+
+@media (max-width: 980px) {
+  .analytics-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .analytics-lower-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .analytics-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-analytics-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .agent-decision-counts {
+    justify-content: flex-start;
+  }
+}

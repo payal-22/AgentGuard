@@ -1,12 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import "./App.css";
+import AnalyticsPanel from "./AnalyticsPanel";
 import PolicyEditor from "./PolicyEditor";
 
 import {
   activateEmergencyStop,
   evaluateAgentAction,
   fetchAgents,
+  fetchAnalyticsSummary,
   fetchApprovals,
   fetchAuditEvents,
   fetchSystemStatus,
@@ -15,6 +17,7 @@ import {
   updateAgentStatus,
   type ActionEvaluation,
   type AgentStatus,
+  type AnalyticsSummary,
   type ApprovalRequest,
   type AuditEvent,
   type FinancialAgent,
@@ -78,6 +81,7 @@ function getErrorMessage(error: unknown): string {
 function App() {
   const [agents, setAgents] = useState<FinancialAgent[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
   const [approvalRequests, setApprovalRequests] = useState<ApprovalRequest[]>(
     [],
   );
@@ -118,17 +122,21 @@ function App() {
       fetchSystemStatus(),
       fetchAuditEvents(),
       fetchApprovals(),
+      fetchAnalyticsSummary(),
     ])
-      .then(([agentData, statusData, auditData, approvalData]) => {
-        if (isCancelled) {
-          return;
-        }
+      .then(
+        ([agentData, statusData, auditData, approvalData, analyticsData]) => {
+          if (isCancelled) {
+            return;
+          }
 
-        setAgents(agentData);
-        setSystemStatus(statusData);
-        setAuditEvents(auditData);
-        setApprovalRequests(approvalData);
-      })
+          setAgents(agentData);
+          setSystemStatus(statusData);
+          setAuditEvents(auditData);
+          setApprovalRequests(approvalData);
+          setAnalytics(analyticsData);
+        },
+      )
       .catch((error: unknown) => {
         if (!isCancelled) {
           setLoadError(getErrorMessage(error));
@@ -160,17 +168,20 @@ function App() {
   }
 
   async function refreshDashboard(): Promise<void> {
-    const [agentData, statusData, auditData, approvalData] = await Promise.all([
-      fetchAgents(),
-      fetchSystemStatus(),
-      fetchAuditEvents(),
-      fetchApprovals(),
-    ]);
+    const [agentData, statusData, auditData, approvalData, analyticsData] =
+      await Promise.all([
+        fetchAgents(),
+        fetchSystemStatus(),
+        fetchAuditEvents(),
+        fetchApprovals(),
+        fetchAnalyticsSummary(),
+      ]);
 
     setAgents(agentData);
     setSystemStatus(statusData);
     setAuditEvents(auditData);
     setApprovalRequests(approvalData);
+    setAnalytics(analyticsData);
   }
 
   async function changeAgentStatus(
@@ -360,6 +371,9 @@ function App() {
           </strong>
         </article>
       </section>
+
+      <AnalyticsPanel summary={analytics} />
+
       <section
         className={`emergency-panel ${
           systemStatus?.emergencyStop ? "emergency-panel-active" : ""
