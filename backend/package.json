@@ -9,7 +9,8 @@
     "start": "tsx src/server.ts",
     "check": "tsc",
     "postinstall": "prisma generate",
-    "start:render": "prisma migrate deploy && prisma db seed && npm start"
+    "start:render": "prisma migrate deploy && prisma db seed && npm start",
+    "start:production": "prisma migrate deploy && prisma db seed && npm start"
   },
   "keywords": [],
   "author": "",
