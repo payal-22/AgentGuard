@@ -22,3 +22,14 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright output
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
+
+# Playwright isolated database
+backend/prisma/e2e.db
+backend/prisma/e2e.db-journal
+backend/prisma/e2e.db-shm
+backend/prisma/e2e.db-wal

@@ -76,9 +76,11 @@ const requestedPort = Number(process.env.PORT ?? "4000");
 const port =
   Number.isInteger(requestedPort) && requestedPort > 0 ? requestedPort : 4000;
 
+const frontendOrigin = process.env.FRONTEND_ORIGIN ?? "http://localhost:5173";
+
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: frontendOrigin,
   }),
 );
 
