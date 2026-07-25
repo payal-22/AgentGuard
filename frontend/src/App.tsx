@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import "./App.css";
+import PolicyEditor from "./PolicyEditor";
 
 import {
   activateEmergencyStop,
@@ -55,19 +56,14 @@ function formatAuditCategory(category: AuditEvent["category"]): string {
   switch (category) {
     case "ACTION_EVALUATION":
       return "Action evaluation";
-
     case "AGENT_STATUS_CHANGE":
       return "Agent status change";
-
     case "SYSTEM_CONTROL":
       return "System control";
-
     case "APPROVAL_DECISION":
       return "Approval decision";
-
     case "POLICY_UPDATE":
       return "Policy update";
-
     default:
       return category;
   }
@@ -108,6 +104,9 @@ function App() {
   const [evaluationError, setEvaluationError] = useState("");
   const [evaluationResult, setEvaluationResult] =
     useState<ActionEvaluation | null>(null);
+
+  const [editingAgent, setEditingAgent] = useState<FinancialAgent | null>(null);
+  const [policySuccessMessage, setPolicySuccessMessage] = useState("");
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
 
@@ -730,6 +729,13 @@ function App() {
         )}
       </section>
 
+      {policySuccessMessage && (
+        <div className="message-card policy-success-message">
+          <strong>Policy updated</strong>
+          <span>{policySuccessMessage}</span>
+        </div>
+      )}
+
       <section>
         <div className="section-heading">
           <div>
@@ -830,6 +836,18 @@ function App() {
                     </div>
                   </div>
                   <div className="agent-controls">
+                    <button
+                      className="control-button policy-edit-button"
+                      type="button"
+                      disabled={isControlLoading}
+                      onClick={() => {
+                        setPolicySuccessMessage("");
+                        setEditingAgent(agent);
+                      }}
+                    >
+                      Edit Policy
+                    </button>
+
                     {agent.status !== "ACTIVE" && (
                       <button
                         className="control-button activate-button"
@@ -954,6 +972,31 @@ function App() {
           </div>
         )}
       </section>
+
+      {editingAgent && (
+        <PolicyEditor
+          agent={editingAgent}
+          onClose={() => {
+            setEditingAgent(null);
+          }}
+          onSaved={(updatedAgent) => {
+            setAgents((currentAgents) =>
+              currentAgents.map((agent) =>
+                agent.id === updatedAgent.id ? updatedAgent : agent,
+              ),
+            );
+
+            setEditingAgent(null);
+            setPolicySuccessMessage(
+              `${updatedAgent.name} governance policy was saved successfully.`,
+            );
+
+            void refreshDashboard().catch((error: unknown) => {
+              setControlError(getErrorMessage(error));
+            });
+          }}
+        />
+      )}
     </main>
   );
 }
