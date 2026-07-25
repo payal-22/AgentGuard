@@ -120,6 +120,37 @@ function parseReviewDecision(value: unknown): ReviewDecision | null {
 
   return null;
 }
+function parsePositiveInteger(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    return null;
+  }
+
+  return value;
+}
+
+function parseAllowedActions(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+
+  const normalizedActions: string[] = [];
+
+  for (const item of value) {
+    if (typeof item !== "string") {
+      return null;
+    }
+
+    const normalizedAction = item.trim().toUpperCase().replaceAll(" ", "_");
+
+    if (!normalizedAction) {
+      return null;
+    }
+
+    normalizedActions.push(normalizedAction);
+  }
+
+  return [...new Set(normalizedActions)];
+}
 
 function mapAgent(agent: FinancialAgentRecord): FinancialAgent {
   return {
@@ -414,6 +445,171 @@ app.patch(
       data: {
         agent: mapAgent(updatedAgent),
         previousStatus,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+  }),
+);
+
+app.patch(
+  "/api/agents/:agentId/policy",
+  asyncHandler(async (request, response) => {
+    const agentId = getNonEmptyString(request.params.agentId);
+
+    if (!agentId) {
+      response.status(400).json({
+        success: false,
+        message: "A valid agent ID is required.",
+      });
+
+      return;
+    }
+
+    const body = getRequestBody(request.body);
+
+    const transactionLimit = parsePositiveInteger(body.transactionLimit);
+
+    const approvalThreshold = parsePositiveInteger(body.approvalThreshold);
+
+    const dailyBudget = parsePositiveInteger(body.dailyBudget);
+
+    const allowedActions = parseAllowedActions(body.allowedActions);
+
+    if (transactionLimit === null) {
+      response.status(400).json({
+        success: false,
+        message: "Transaction limit must be a positive whole number.",
+      });
+
+      return;
+    }
+
+    if (approvalThreshold === null) {
+      response.status(400).json({
+        success: false,
+        message: "Approval threshold must be a positive whole number.",
+      });
+
+      return;
+    }
+
+    if (dailyBudget === null) {
+      response.status(400).json({
+        success: false,
+        message: "Daily budget must be a positive whole number.",
+      });
+
+      return;
+    }
+
+    if (!allowedActions) {
+      response.status(400).json({
+        success: false,
+        message: "At least one valid allowed action is required.",
+      });
+
+      return;
+    }
+
+    if (approvalThreshold > transactionLimit) {
+      response.status(400).json({
+        success: false,
+        message: "Approval threshold cannot exceed the transaction limit.",
+      });
+
+      return;
+    }
+
+    const existingAgent = await prisma.financialAgent.findUnique({
+      where: {
+        id: agentId,
+      },
+    });
+
+    if (!existingAgent) {
+      response.status(404).json({
+        success: false,
+        message: "Agent not found.",
+      });
+
+      return;
+    }
+
+    if (dailyBudget < existingAgent.spentToday) {
+      response.status(409).json({
+        success: false,
+
+        message: `Daily budget cannot be lower than the agent's current spend of ₹${existingAgent.spentToday.toLocaleString(
+          "en-IN",
+        )}.`,
+      });
+
+      return;
+    }
+
+    const updatedAgent = await prisma.$transaction(async (transaction) => {
+      const agent = await transaction.financialAgent.update({
+        where: {
+          id: agentId,
+        },
+
+        data: {
+          transactionLimit,
+          approvalThreshold,
+          dailyBudget,
+
+          allowedActions: {
+            deleteMany: {},
+
+            create: allowedActions.map((action) => ({
+              action,
+            })),
+          },
+        },
+
+        include: {
+          allowedActions: {
+            select: {
+              action: true,
+            },
+          },
+        },
+      });
+
+      await transaction.auditEvent.create({
+        data: {
+          category: "POLICY_UPDATE",
+          actor: "dashboard-operator",
+          agentName: agent.name,
+          outcome: "POLICY_UPDATED",
+
+          message:
+            `${agent.name} policy updated. ` +
+            `Transaction limit: ₹${transactionLimit.toLocaleString(
+              "en-IN",
+            )}; ` +
+            `approval threshold: ₹${approvalThreshold.toLocaleString(
+              "en-IN",
+            )}; ` +
+            `daily budget: ₹${dailyBudget.toLocaleString("en-IN")}.`,
+
+          agent: {
+            connect: {
+              id: agent.id,
+            },
+          },
+        },
+      });
+
+      return agent;
+    });
+
+    response.status(200).json({
+      success: true,
+      message: "Agent policy updated successfully.",
+
+      data: {
+        agent: mapAgent(updatedAgent),
         updatedAt: new Date().toISOString(),
       },
     });

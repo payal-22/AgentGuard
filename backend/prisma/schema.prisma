@@ -25,6 +25,7 @@ enum AuditCategory {
   AGENT_STATUS_CHANGE
   SYSTEM_CONTROL
   APPROVAL_DECISION
+  POLICY_UPDATE
 }
 
 model FinancialAgent {

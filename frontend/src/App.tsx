@@ -1,111 +1,25 @@
 import { useEffect, useState, type FormEvent } from "react";
+
 import "./App.css";
 
-type AgentStatus = "ACTIVE" | "PAUSED" | "REVOKED";
-
-type DecisionStatus = "ALLOWED" | "DENIED" | "APPROVAL_REQUIRED";
-
-type FinancialAgent = {
-  id: string;
-  name: string;
-  description: string;
-  status: AgentStatus;
-  allowedActions: string[];
-  transactionLimit: number;
-  approvalThreshold: number;
-  dailyBudget: number;
-  spentToday: number;
-};
-
-type PolicyDecision = {
-  status: DecisionStatus;
-  reason: string;
-  policyCode: string;
-};
-
-type AgentsResponse = {
-  success: boolean;
-  data: FinancialAgent[];
-};
-
-type EvaluationResponse = {
-  success: boolean;
-  data: {
-    request: {
-      agentId: string;
-      action: string;
-      amount: number;
-      customerId?: string;
-    };
-    decision: PolicyDecision;
-    agent: {
-      id: string;
-      name: string;
-      status: AgentStatus;
-    };
-    budget: {
-      dailyBudget: number;
-      spentBefore: number;
-      spentAfter: number;
-      remainingBudget: number;
-    };
-    approvalRequest?: ApprovalRequest;
-    evaluatedAt: string;
-  };
-};
-type SystemStatus = {
-  emergencyStop: boolean;
-  updatedAt: string;
-};
-
-type SystemStatusResponse = {
-  success: boolean;
-  data: SystemStatus;
-};
-type AuditCategory =
-  | "ACTION_EVALUATION"
-  | "AGENT_STATUS_CHANGE"
-  | "SYSTEM_CONTROL"
-  | "APPROVAL_DECISION";
-type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
-
-type ApprovalRequest = {
-  id: string;
-  agentId: string;
-  agentName: string;
-  action: string;
-  amount: number;
-  customerId?: string;
-  reason: string;
-  status: ApprovalStatus;
-  requestedAt: string;
-  reviewedAt?: string;
-  reviewedBy?: string;
-};
-
-type ApprovalsResponse = {
-  success: boolean;
-  data: ApprovalRequest[];
-};
-type AuditEvent = {
-  id: string;
-  category: AuditCategory;
-  actor: string;
-  agentId?: string;
-  agentName?: string;
-  action?: string;
-  amount?: number;
-  outcome: string;
-  message: string;
-  createdAt: string;
-};
-
-type AuditEventsResponse = {
-  success: boolean;
-  data: AuditEvent[];
-};
-
-const API_URL = import.meta.env.VITE_API_URL as string;
+import {
+  activateEmergencyStop,
+  evaluateAgentAction,
+  fetchAgents,
+  fetchApprovals,
+  fetchAuditEvents,
+  fetchSystemStatus,
+  resumeSystem,
+  reviewApproval as reviewApprovalRequest,
+  updateAgentStatus,
+  type ActionEvaluation,
+  type AgentStatus,
+  type ApprovalRequest,
+  type AuditEvent,
+  type FinancialAgent,
+  type ReviewDecision,
+  type SystemState,
+} from "./services/api";
 
 function formatCurrency(amount: number): string {
   return new Intl.NumberFormat("en-IN", {
@@ -123,81 +37,46 @@ function formatActionName(action: string): string {
     })
     .join(" ");
 }
+
 function formatDateTime(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Invalid date";
+  }
+
   return new Intl.DateTimeFormat("en-IN", {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(new Date(value));
+  }).format(date);
 }
 
-function formatAuditCategory(category: AuditCategory): string {
-  return category
-    .split("_")
-    .map((word) => {
-      return word.charAt(0) + word.slice(1).toLowerCase();
-    })
-    .join(" ");
+function formatAuditCategory(category: AuditEvent["category"]): string {
+  switch (category) {
+    case "ACTION_EVALUATION":
+      return "Action evaluation";
+
+    case "AGENT_STATUS_CHANGE":
+      return "Agent status change";
+
+    case "SYSTEM_CONTROL":
+      return "System control";
+
+    case "APPROVAL_DECISION":
+      return "Approval decision";
+
+    case "POLICY_UPDATE":
+      return "Policy update";
+
+    default:
+      return category;
+  }
 }
 
-async function fetchAgents(): Promise<FinancialAgent[]> {
-  const response = await fetch(`${API_URL}/api/agents`);
-
-  if (!response.ok) {
-    throw new Error(`Unable to load agents. Status: ${response.status}`);
-  }
-
-  const result = (await response.json()) as AgentsResponse;
-
-  if (!result.success) {
-    throw new Error("The API could not return the agents.");
-  }
-
-  return result.data;
-}
-async function fetchSystemStatus(): Promise<SystemStatus> {
-  const response = await fetch(`${API_URL}/api/system/status`);
-
-  if (!response.ok) {
-    throw new Error(`Unable to load system status. Status: ${response.status}`);
-  }
-
-  const result = (await response.json()) as SystemStatusResponse;
-
-  if (!result.success) {
-    throw new Error("The API could not return system status.");
-  }
-
-  return result.data;
-}
-async function fetchAuditEvents(): Promise<AuditEvent[]> {
-  const response = await fetch(`${API_URL}/api/audit-events?limit=20`);
-
-  if (!response.ok) {
-    throw new Error(`Unable to load audit events. Status: ${response.status}`);
-  }
-
-  const result = (await response.json()) as AuditEventsResponse;
-
-  if (!result.success) {
-    throw new Error("The API could not return audit events.");
-  }
-
-  return result.data;
-}
-async function fetchApprovals(): Promise<ApprovalRequest[]> {
-  const response = await fetch(`${API_URL}/api/approvals`);
-
-  if (!response.ok) {
-    throw new Error(`Unable to load approvals. Status: ${response.status}`);
-  }
-
-  const result = (await response.json()) as ApprovalsResponse;
-
-  if (!result.success) {
-    throw new Error("The API could not return approval requests.");
-  }
-
-  return result.data;
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : "An unexpected error occurred.";
 }
 
 function App() {
@@ -208,31 +87,27 @@ function App() {
   );
 
   const [approvalError, setApprovalError] = useState("");
-
   const [reviewingApprovalId, setReviewingApprovalId] = useState<string | null>(
     null,
   );
+
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
 
-  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [systemStatus, setSystemStatus] = useState<SystemState | null>(null);
 
   const [controlError, setControlError] = useState("");
   const [isControlLoading, setIsControlLoading] = useState(false);
 
   const [selectedAgentId, setSelectedAgentId] = useState("refund-agent");
-
   const [selectedAction, setSelectedAction] = useState("ISSUE_REFUND");
-
   const [amount, setAmount] = useState("2000");
   const [customerId, setCustomerId] = useState("CM-1001");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [evaluationError, setEvaluationError] = useState("");
-
-  const [evaluationResult, setEvaluationResult] = useState<
-    EvaluationResponse["data"] | null
-  >(null);
+  const [evaluationResult, setEvaluationResult] =
+    useState<ActionEvaluation | null>(null);
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
 
@@ -246,21 +121,18 @@ function App() {
       fetchApprovals(),
     ])
       .then(([agentData, statusData, auditData, approvalData]) => {
-        if (!isCancelled) {
-          setAgents(agentData);
-          setSystemStatus(statusData);
-          setAuditEvents(auditData);
-          setApprovalRequests(approvalData);
+        if (isCancelled) {
+          return;
         }
+
+        setAgents(agentData);
+        setSystemStatus(statusData);
+        setAuditEvents(auditData);
+        setApprovalRequests(approvalData);
       })
       .catch((error: unknown) => {
         if (!isCancelled) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "An unexpected error occurred.";
-
-          setLoadError(message);
+          setLoadError(getErrorMessage(error));
         }
       })
       .finally(() => {
@@ -283,8 +155,11 @@ function App() {
 
     if (newAgent && newAgent.allowedActions.length > 0) {
       setSelectedAction(newAgent.allowedActions[0]);
+    } else {
+      setSelectedAction("");
     }
   }
+
   async function refreshDashboard(): Promise<void> {
     const [agentData, statusData, auditData, approvalData] = await Promise.all([
       fetchAgents(),
@@ -307,34 +182,12 @@ function App() {
       setIsControlLoading(true);
       setControlError("");
 
-      const response = await fetch(`${API_URL}/api/agents/${agentId}/status`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          status,
-        }),
-      });
-
-      const result = (await response.json()) as {
-        success: boolean;
-        message?: string;
-      };
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.message ?? "Unable to update agent status.");
-      }
-
+      await updateAgentStatus(agentId, status);
       await refreshDashboard();
-      setEvaluationResult(null);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.";
 
-      setControlError(message);
+      setEvaluationResult(null);
+    } catch (error: unknown) {
+      setControlError(getErrorMessage(error));
     } finally {
       setIsControlLoading(false);
     }
@@ -355,39 +208,24 @@ function App() {
       setIsControlLoading(true);
       setControlError("");
 
-      const endpoint = shouldStop
-        ? "/api/system/emergency-stop"
-        : "/api/system/resume";
-
-      const response = await fetch(`${API_URL}${endpoint}`, {
-        method: "POST",
-      });
-
-      const result = (await response.json()) as {
-        success: boolean;
-        message?: string;
-      };
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.message ?? "Unable to update system status.");
+      if (shouldStop) {
+        await activateEmergencyStop();
+      } else {
+        await resumeSystem();
       }
 
       await refreshDashboard();
       setEvaluationResult(null);
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.";
-
-      setControlError(message);
+    } catch (error: unknown) {
+      setControlError(getErrorMessage(error));
     } finally {
       setIsControlLoading(false);
     }
   }
-  async function reviewApproval(
+
+  async function handleReviewApproval(
     approvalId: string,
-    decision: "APPROVED" | "REJECTED",
+    decision: ReviewDecision,
   ): Promise<void> {
     const confirmed = window.confirm(
       decision === "APPROVED"
@@ -403,38 +241,17 @@ function App() {
       setReviewingApprovalId(approvalId);
       setApprovalError("");
 
-      const response = await fetch(`${API_URL}/api/approvals/${approvalId}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          decision,
-          reviewedBy: "Yash",
-        }),
-      });
-
-      const result = (await response.json()) as {
-        success: boolean;
-        message?: string;
-      };
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.message ?? "Unable to review approval request.");
-      }
+      await reviewApprovalRequest(approvalId, decision, "Yash");
 
       await refreshDashboard();
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.";
-
-      setApprovalError(message);
+      setEvaluationResult(null);
+    } catch (error: unknown) {
+      setApprovalError(getErrorMessage(error));
     } finally {
       setReviewingApprovalId(null);
     }
   }
+
   async function handleSubmit(
     event: FormEvent<HTMLFormElement>,
   ): Promise<void> {
@@ -462,45 +279,19 @@ function App() {
       setEvaluationError("");
       setEvaluationResult(null);
 
-      const response = await fetch(`${API_URL}/api/actions/evaluate`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          agentId: selectedAgentId,
-          action: selectedAction,
-          amount: numericAmount,
-          customerId: customerId.trim() || undefined,
-        }),
+      const trimmedCustomerId = customerId.trim();
+
+      const result = await evaluateAgentAction({
+        agentId: selectedAgentId,
+        action: selectedAction,
+        amount: numericAmount,
+        ...(trimmedCustomerId ? { customerId: trimmedCustomerId } : {}),
       });
 
-      const result = (await response.json()) as
-        | EvaluationResponse
-        | {
-            success: false;
-            message: string;
-          };
-
-      if (!response.ok || !result.success) {
-        const message =
-          "message" in result
-            ? result.message
-            : "The action could not be evaluated.";
-
-        throw new Error(message);
-      }
-
-      setEvaluationResult(result.data);
-
+      setEvaluationResult(result);
       await refreshDashboard();
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.";
-
-      setEvaluationError(message);
+    } catch (error: unknown) {
+      setEvaluationError(getErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -903,7 +694,7 @@ function App() {
                       type="button"
                       disabled={reviewingApprovalId !== null}
                       onClick={() => {
-                        void reviewApproval(approval.id, "REJECTED");
+                        void handleReviewApproval(approval.id, "REJECTED");
                       }}
                     >
                       {reviewingApprovalId === approval.id
@@ -916,7 +707,7 @@ function App() {
                       type="button"
                       disabled={reviewingApprovalId !== null}
                       onClick={() => {
-                        void reviewApproval(approval.id, "APPROVED");
+                        void handleReviewApproval(approval.id, "APPROVED");
                       }}
                     >
                       {reviewingApprovalId === approval.id
