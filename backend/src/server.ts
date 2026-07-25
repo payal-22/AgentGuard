@@ -1,16 +1,18 @@
-import { randomUUID } from "node:crypto";
 import cors from "cors";
-import express, { type Request, type Response } from "express";
+import express, {
+  type NextFunction,
+  type Request,
+  type RequestHandler,
+  type Response,
+} from "express";
+
+import { prisma } from "./lib/prisma";
 
 type AgentStatus = "ACTIVE" | "PAUSED" | "REVOKED";
 
 type DecisionStatus = "ALLOWED" | "DENIED" | "APPROVAL_REQUIRED";
 
-type AuditCategory =
-  | "ACTION_EVALUATION"
-  | "AGENT_STATUS_CHANGE"
-  | "SYSTEM_CONTROL"
-  | "APPROVAL_DECISION";
+type ReviewDecision = "APPROVED" | "REJECTED";
 
 type FinancialAgent = {
   id: string;
@@ -23,20 +25,19 @@ type FinancialAgent = {
   dailyBudget: number;
   spentToday: number;
 };
-type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
 
-type ApprovalRequest = {
+type FinancialAgentRecord = {
   id: string;
-  agentId: string;
-  agentName: string;
-  action: string;
-  amount: number;
-  customerId?: string;
-  reason: string;
-  status: ApprovalStatus;
-  requestedAt: string;
-  reviewedAt?: string;
-  reviewedBy?: string;
+  name: string;
+  description: string;
+  status: AgentStatus;
+  transactionLimit: number;
+  approvalThreshold: number;
+  dailyBudget: number;
+  spentToday: number;
+  allowedActions: Array<{
+    action: string;
+  }>;
 };
 
 type ActionRequest = {
@@ -52,26 +53,25 @@ type PolicyDecision = {
   policyCode: string;
 };
 
-type SystemState = {
-  emergencyStop: boolean;
-  updatedAt: string;
+type ApprovalAction = {
+  action: string;
+  amount: number;
 };
 
-type AuditEvent = {
-  id: string;
-  category: AuditCategory;
-  actor: string;
-  agentId?: string;
-  agentName?: string;
-  action?: string;
-  amount?: number;
-  outcome: string;
-  message: string;
-  createdAt: string;
-};
+type UnknownRecord = Record<string, unknown>;
+
+type AsyncRouteHandler = (
+  request: Request,
+  response: Response,
+  next: NextFunction,
+) => Promise<void>;
 
 const app = express();
-const port = Number(process.env.PORT ?? 4000);
+
+const requestedPort = Number(process.env.PORT ?? "4000");
+
+const port =
+  Number.isInteger(requestedPort) && requestedPort > 0 ? requestedPort : 4000;
 
 app.use(
   cors({
@@ -81,55 +81,68 @@ app.use(
 
 app.use(express.json());
 
-const agents: FinancialAgent[] = [
-  {
-    id: "refund-agent",
-    name: "Refund Agent",
-    description: "Processes eligible customer refund requests.",
-    status: "ACTIVE",
-    allowedActions: ["VIEW_TRANSACTION", "ISSUE_REFUND"],
-    transactionLimit: 10000,
-    approvalThreshold: 5000,
-    dailyBudget: 50000,
-    spentToday: 12000,
-  },
-  {
-    id: "travel-agent",
-    name: "Travel Booking Agent",
-    description: "Books flights and hotels within approved limits.",
-    status: "ACTIVE",
-    allowedActions: ["BOOK_FLIGHT", "BOOK_HOTEL"],
-    transactionLimit: 25000,
-    approvalThreshold: 15000,
-    dailyBudget: 100000,
-    spentToday: 30000,
-  },
-  {
-    id: "servicing-agent",
-    name: "Card Servicing Agent",
-    description: "Handles fee waivers and card servicing requests.",
-    status: "PAUSED",
-    allowedActions: ["WAIVE_FEE", "REPLACE_CARD"],
-    transactionLimit: 5000,
-    approvalThreshold: 2500,
-    dailyBudget: 20000,
-    spentToday: 4000,
-  },
-];
+function asyncHandler(handler: AsyncRouteHandler): RequestHandler {
+  return (request, response, next) => {
+    void handler(request, response, next).catch(next);
+  };
+}
 
-const systemState: SystemState = {
-  emergencyStop: false,
-  updatedAt: new Date().toISOString(),
-};
+function getRequestBody(value: unknown): UnknownRecord {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as UnknownRecord;
+  }
 
-const auditEvents: AuditEvent[] = [];
-const approvalRequests: ApprovalRequest[] = [];
+  return {};
+}
+
+function getNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+
+  return trimmedValue.length > 0 ? trimmedValue : null;
+}
+
+function parseAgentStatus(value: unknown): AgentStatus | null {
+  if (value === "ACTIVE" || value === "PAUSED" || value === "REVOKED") {
+    return value;
+  }
+
+  return null;
+}
+
+function parseReviewDecision(value: unknown): ReviewDecision | null {
+  if (value === "APPROVED" || value === "REJECTED") {
+    return value;
+  }
+
+  return null;
+}
+
+function mapAgent(agent: FinancialAgentRecord): FinancialAgent {
+  return {
+    id: agent.id,
+    name: agent.name,
+    description: agent.description,
+    status: agent.status,
+
+    allowedActions: agent.allowedActions.map((permission) => permission.action),
+
+    transactionLimit: agent.transactionLimit,
+    approvalThreshold: agent.approvalThreshold,
+    dailyBudget: agent.dailyBudget,
+    spentToday: agent.spentToday,
+  };
+}
 
 function evaluateAction(
   request: ActionRequest,
   agent: FinancialAgent,
+  emergencyStop: boolean,
 ): PolicyDecision {
-  if (systemState.emergencyStop) {
+  if (emergencyStop) {
     return {
       status: "DENIED",
       reason:
@@ -165,9 +178,11 @@ function evaluateAction(
   if (request.amount > agent.transactionLimit) {
     return {
       status: "DENIED",
+
       reason: `The requested amount exceeds the ₹${agent.transactionLimit.toLocaleString(
         "en-IN",
       )} transaction limit.`,
+
       policyCode: "TRANSACTION_LIMIT_EXCEEDED",
     };
   }
@@ -183,9 +198,11 @@ function evaluateAction(
   if (request.amount > agent.approvalThreshold) {
     return {
       status: "APPROVAL_REQUIRED",
+
       reason: `Actions above ₹${agent.approvalThreshold.toLocaleString(
         "en-IN",
       )} require supervisor approval.`,
+
       policyCode: "SUPERVISOR_APPROVAL_REQUIRED",
     };
   }
@@ -196,11 +213,13 @@ function evaluateAction(
     policyCode: "ALL_POLICIES_PASSED",
   };
 }
+
 function validateApprovedAction(
-  approval: ApprovalRequest,
+  approval: ApprovalAction,
   agent: FinancialAgent,
+  emergencyStop: boolean,
 ): PolicyDecision {
-  if (systemState.emergencyStop) {
+  if (emergencyStop) {
     return {
       status: "DENIED",
       reason: "The emergency stop is active. This approval cannot be executed.",
@@ -256,53 +275,74 @@ function validateApprovedAction(
   };
 }
 
-function recordAuditEvent(
-  event: Omit<AuditEvent, "id" | "createdAt">,
-): AuditEvent {
-  const auditEvent: AuditEvent = {
-    id: randomUUID(),
-    createdAt: new Date().toISOString(),
-    ...event,
-  };
+/*
+|--------------------------------------------------------------------------
+| Health
+|--------------------------------------------------------------------------
+*/
 
-  auditEvents.unshift(auditEvent);
+app.get(
+  "/health",
+  asyncHandler(async (_request, response) => {
+    await prisma.$queryRaw`SELECT 1`;
 
-  if (auditEvents.length > 100) {
-    auditEvents.length = 100;
-  }
+    response.status(200).json({
+      success: true,
+      message: "AgentGuard backend is running",
+      database: "connected",
+    });
+  }),
+);
 
-  return auditEvent;
-}
+/*
+|--------------------------------------------------------------------------
+| Agents
+|--------------------------------------------------------------------------
+*/
 
-app.get("/health", (_request: Request, response: Response) => {
-  response.status(200).json({
-    success: true,
-    message: "AgentGuard backend is running",
-  });
-});
+app.get(
+  "/api/agents",
+  asyncHandler(async (_request, response) => {
+    const agentRecords = await prisma.financialAgent.findMany({
+      include: {
+        allowedActions: {
+          select: {
+            action: true,
+          },
+        },
+      },
 
-app.get("/api/agents", (_request: Request, response: Response) => {
-  response.status(200).json({
-    success: true,
-    data: agents,
-  });
-});
+      orderBy: {
+        createdAt: "asc",
+      },
+    });
+
+    response.status(200).json({
+      success: true,
+      data: agentRecords.map(mapAgent),
+    });
+  }),
+);
 
 app.patch(
   "/api/agents/:agentId/status",
-  (request: Request, response: Response) => {
-    const agentId = request.params.agentId;
+  asyncHandler(async (request, response) => {
+    const agentId = getNonEmptyString(request.params.agentId);
 
-    const body = request.body as {
-      status?: AgentStatus;
-    };
+    if (!agentId) {
+      response.status(400).json({
+        success: false,
+        message: "A valid agent ID is required.",
+      });
 
-    const validStatuses: AgentStatus[] = ["ACTIVE", "PAUSED", "REVOKED"];
+      return;
+    }
 
-    if (
-      typeof body.status !== "string" ||
-      !validStatuses.includes(body.status)
-    ) {
+    const body = getRequestBody(request.body);
+
+    const requestedStatus = parseAgentStatus(body.status);
+
+    if (!requestedStatus) {
       response.status(400).json({
         success: false,
         message: "Status must be ACTIVE, PAUSED or REVOKED.",
@@ -311,9 +351,13 @@ app.patch(
       return;
     }
 
-    const agent = agents.find((currentAgent) => currentAgent.id === agentId);
+    const existingAgent = await prisma.financialAgent.findUnique({
+      where: {
+        id: agentId,
+      },
+    });
 
-    if (!agent) {
+    if (!existingAgent) {
       response.status(404).json({
         success: false,
         message: "Agent not found.",
@@ -322,323 +366,711 @@ app.patch(
       return;
     }
 
-    const previousStatus = agent.status;
-    agent.status = body.status;
+    const previousStatus = existingAgent.status;
 
-    recordAuditEvent({
-      category: "AGENT_STATUS_CHANGE",
-      actor: "dashboard-operator",
-      agentId: agent.id,
-      agentName: agent.name,
-      outcome: body.status,
-      message: `${agent.name} changed from ${previousStatus} to ${body.status}.`,
+    const updatedAgent = await prisma.$transaction(async (transaction) => {
+      const agent = await transaction.financialAgent.update({
+        where: {
+          id: agentId,
+        },
+
+        data: {
+          status: requestedStatus,
+        },
+
+        include: {
+          allowedActions: {
+            select: {
+              action: true,
+            },
+          },
+        },
+      });
+
+      await transaction.auditEvent.create({
+        data: {
+          category: "AGENT_STATUS_CHANGE",
+
+          actor: "dashboard-operator",
+          agentName: agent.name,
+          outcome: requestedStatus,
+
+          message: `${agent.name} changed from ${previousStatus} to ${requestedStatus}.`,
+
+          agent: {
+            connect: {
+              id: agent.id,
+            },
+          },
+        },
+      });
+
+      return agent;
     });
 
     response.status(200).json({
       success: true,
+
       data: {
-        agent,
+        agent: mapAgent(updatedAgent),
         previousStatus,
         updatedAt: new Date().toISOString(),
       },
     });
-  },
+  }),
 );
 
-app.get("/api/system/status", (_request: Request, response: Response) => {
-  response.status(200).json({
-    success: true,
-    data: systemState,
-  });
-});
+/*
+|--------------------------------------------------------------------------
+| System controls
+|--------------------------------------------------------------------------
+*/
 
-app.post(
-  "/api/system/emergency-stop",
-  (_request: Request, response: Response) => {
-    systemState.emergencyStop = true;
-    systemState.updatedAt = new Date().toISOString();
+app.get(
+  "/api/system/status",
+  asyncHandler(async (_request, response) => {
+    const systemState = await prisma.systemState.upsert({
+      where: {
+        id: 1,
+      },
 
-    recordAuditEvent({
-      category: "SYSTEM_CONTROL",
-      actor: "dashboard-operator",
-      outcome: "EMERGENCY_STOP_ACTIVATED",
-      message:
-        "Fleet-wide emergency stop was activated. All financial actions are blocked.",
+      update: {},
+
+      create: {
+        id: 1,
+        emergencyStop: false,
+      },
     });
 
     response.status(200).json({
       success: true,
-      message: "Fleet-wide emergency stop activated.",
       data: systemState,
     });
-  },
+  }),
 );
 
-app.post("/api/system/resume", (_request: Request, response: Response) => {
-  systemState.emergencyStop = false;
-  systemState.updatedAt = new Date().toISOString();
+app.post(
+  "/api/system/emergency-stop",
+  asyncHandler(async (_request, response) => {
+    const systemState = await prisma.$transaction(async (transaction) => {
+      const updatedState = await transaction.systemState.upsert({
+        where: {
+          id: 1,
+        },
 
-  recordAuditEvent({
-    category: "SYSTEM_CONTROL",
-    actor: "dashboard-operator",
-    outcome: "SYSTEM_RESUMED",
-    message:
-      "Financial agent operations were resumed after the emergency stop.",
-  });
+        update: {
+          emergencyStop: true,
+        },
 
-  response.status(200).json({
-    success: true,
-    message: "Agent operations resumed.",
-    data: systemState,
-  });
-});
+        create: {
+          id: 1,
+          emergencyStop: true,
+        },
+      });
 
-app.post("/api/actions/evaluate", (request: Request, response: Response) => {
-  const body = request.body as Partial<ActionRequest>;
+      await transaction.auditEvent.create({
+        data: {
+          category: "SYSTEM_CONTROL",
+          actor: "dashboard-operator",
 
-  if (
-    typeof body.agentId !== "string" ||
-    typeof body.action !== "string" ||
-    typeof body.amount !== "number"
-  ) {
-    response.status(400).json({
-      success: false,
-      message: "agentId, action and amount are required.",
+          outcome: "EMERGENCY_STOP_ACTIVATED",
+
+          message:
+            "Fleet-wide emergency stop was activated. All financial actions are blocked.",
+        },
+      });
+
+      return updatedState;
     });
 
-    return;
-  }
+    response.status(200).json({
+      success: true,
 
-  if (!Number.isFinite(body.amount) || body.amount <= 0) {
-    response.status(400).json({
-      success: false,
-      message: "Amount must be a valid number greater than zero.",
+      message: "Fleet-wide emergency stop activated.",
+
+      data: systemState,
+    });
+  }),
+);
+
+app.post(
+  "/api/system/resume",
+  asyncHandler(async (_request, response) => {
+    const systemState = await prisma.$transaction(async (transaction) => {
+      const updatedState = await transaction.systemState.upsert({
+        where: {
+          id: 1,
+        },
+
+        update: {
+          emergencyStop: false,
+        },
+
+        create: {
+          id: 1,
+          emergencyStop: false,
+        },
+      });
+
+      await transaction.auditEvent.create({
+        data: {
+          category: "SYSTEM_CONTROL",
+          actor: "dashboard-operator",
+          outcome: "SYSTEM_RESUMED",
+
+          message:
+            "Financial agent operations were resumed after the emergency stop.",
+        },
+      });
+
+      return updatedState;
     });
 
-    return;
-  }
-
-  const agent = agents.find((currentAgent) => currentAgent.id === body.agentId);
-
-  if (!agent) {
-    response.status(404).json({
-      success: false,
-      message: "Agent not found.",
+    response.status(200).json({
+      success: true,
+      message: "Agent operations resumed.",
+      data: systemState,
     });
+  }),
+);
 
-    return;
-  }
+/*
+|--------------------------------------------------------------------------
+| Action policy evaluation
+|--------------------------------------------------------------------------
+*/
 
-  const actionRequest: ActionRequest = {
-    agentId: body.agentId,
-    action: body.action,
-    amount: body.amount,
-    customerId: body.customerId,
-  };
+app.post(
+  "/api/actions/evaluate",
+  asyncHandler(async (request, response) => {
+    const body = getRequestBody(request.body);
 
-  const budgetBefore = agent.spentToday;
+    const agentId = getNonEmptyString(body.agentId);
 
-  const decision = evaluateAction(actionRequest, agent);
+    const action = getNonEmptyString(body.action);
 
-  let approvalRequest: ApprovalRequest | undefined;
+    const amount = body.amount;
 
-  if (decision.status === "ALLOWED") {
-    agent.spentToday += actionRequest.amount;
-  }
-
-  if (decision.status === "APPROVAL_REQUIRED") {
-    approvalRequest = {
-      id: randomUUID(),
-      agentId: agent.id,
-      agentName: agent.name,
-      action: actionRequest.action,
-      amount: actionRequest.amount,
-      customerId: actionRequest.customerId,
-      reason: decision.reason,
-      status: "PENDING",
-      requestedAt: new Date().toISOString(),
-    };
-
-    approvalRequests.unshift(approvalRequest);
-
-    if (approvalRequests.length > 100) {
-      approvalRequests.length = 100;
-    }
-  }
-
-  if (decision.status === "ALLOWED") {
-    agent.spentToday += actionRequest.amount;
-  }
-
-  recordAuditEvent({
-    category: "ACTION_EVALUATION",
-    actor: agent.id,
-    agentId: agent.id,
-    agentName: agent.name,
-    action: actionRequest.action,
-    amount: actionRequest.amount,
-    outcome: decision.status,
-    message: decision.reason,
-  });
-
-  response.status(200).json({
-    success: true,
-    data: {
-      request: actionRequest,
-      decision,
-      agent: {
-        id: agent.id,
-        name: agent.name,
-        status: agent.status,
-      },
-      budget: {
-        dailyBudget: agent.dailyBudget,
-        spentBefore: budgetBefore,
-        spentAfter: agent.spentToday,
-        remainingBudget: agent.dailyBudget - agent.spentToday,
-      },
-      approvalRequest,
-      evaluatedAt: new Date().toISOString(),
-    },
-  });
-});
-
-app.get("/api/audit-events", (request: Request, response: Response) => {
-  const requestedLimit = Number(request.query.limit ?? 20);
-
-  const limit =
-    Number.isInteger(requestedLimit) && requestedLimit > 0
-      ? Math.min(requestedLimit, 50)
-      : 20;
-
-  response.status(200).json({
-    success: true,
-    data: auditEvents.slice(0, limit),
-  });
-});
-app.get("/api/approvals", (_request: Request, response: Response) => {
-  response.status(200).json({
-    success: true,
-    data: approvalRequests,
-  });
-});
-app.patch(
-  "/api/approvals/:approvalId",
-  (request: Request, response: Response) => {
-    const approvalId = request.params.approvalId;
-
-    const body = request.body as {
-      decision?: "APPROVED" | "REJECTED";
-      reviewedBy?: string;
-    };
-
-    if (body.decision !== "APPROVED" && body.decision !== "REJECTED") {
+    if (!agentId || !action) {
       response.status(400).json({
         success: false,
+
+        message: "agentId, action and amount are required.",
+      });
+
+      return;
+    }
+
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+      response.status(400).json({
+        success: false,
+
+        message: "Amount must be a valid number greater than zero.",
+      });
+
+      return;
+    }
+
+    const customerId = getNonEmptyString(body.customerId);
+
+    const actionRequest: ActionRequest = {
+      agentId,
+      action,
+      amount,
+
+      ...(customerId
+        ? {
+            customerId,
+          }
+        : {}),
+    };
+
+    const evaluation = await prisma.$transaction(async (transaction) => {
+      const agentRecord = await transaction.financialAgent.findUnique({
+        where: {
+          id: actionRequest.agentId,
+        },
+
+        include: {
+          allowedActions: {
+            select: {
+              action: true,
+            },
+          },
+        },
+      });
+
+      if (!agentRecord) {
+        return null;
+      }
+
+      const systemState = await transaction.systemState.upsert({
+        where: {
+          id: 1,
+        },
+
+        update: {},
+
+        create: {
+          id: 1,
+          emergencyStop: false,
+        },
+      });
+
+      const agent = mapAgent(agentRecord);
+
+      const decision = evaluateAction(
+        actionRequest,
+        agent,
+        systemState.emergencyStop,
+      );
+
+      const spentBefore = agent.spentToday;
+
+      let spentAfter = spentBefore;
+
+      if (decision.status === "ALLOWED") {
+        const updatedAgent = await transaction.financialAgent.update({
+          where: {
+            id: agent.id,
+          },
+
+          data: {
+            spentToday: {
+              increment: actionRequest.amount,
+            },
+          },
+
+          select: {
+            spentToday: true,
+          },
+        });
+
+        spentAfter = updatedAgent.spentToday;
+      }
+
+      const approvalRequest =
+        decision.status === "APPROVAL_REQUIRED"
+          ? await transaction.approvalRequest.create({
+              data: {
+                agentName: agent.name,
+                action: actionRequest.action,
+                amount: actionRequest.amount,
+
+                customerId: actionRequest.customerId ?? null,
+
+                reason: decision.reason,
+
+                agent: {
+                  connect: {
+                    id: agent.id,
+                  },
+                },
+              },
+            })
+          : null;
+
+      await transaction.auditEvent.create({
+        data: {
+          category: "ACTION_EVALUATION",
+
+          actor: agent.id,
+          agentName: agent.name,
+          action: actionRequest.action,
+          amount: actionRequest.amount,
+          outcome: decision.status,
+          message: decision.reason,
+
+          agent: {
+            connect: {
+              id: agent.id,
+            },
+          },
+        },
+      });
+
+      return {
+        agent,
+        decision,
+        spentBefore,
+        spentAfter,
+        approvalRequest,
+      };
+    });
+
+    if (!evaluation) {
+      response.status(404).json({
+        success: false,
+        message: "Agent not found.",
+      });
+
+      return;
+    }
+
+    response.status(200).json({
+      success: true,
+
+      data: {
+        request: actionRequest,
+        decision: evaluation.decision,
+
+        agent: {
+          id: evaluation.agent.id,
+          name: evaluation.agent.name,
+          status: evaluation.agent.status,
+        },
+
+        budget: {
+          dailyBudget: evaluation.agent.dailyBudget,
+
+          spentBefore: evaluation.spentBefore,
+
+          spentAfter: evaluation.spentAfter,
+
+          remainingBudget: evaluation.agent.dailyBudget - evaluation.spentAfter,
+        },
+
+        ...(evaluation.approvalRequest
+          ? {
+              approvalRequest: evaluation.approvalRequest,
+            }
+          : {}),
+
+        evaluatedAt: new Date().toISOString(),
+      },
+    });
+  }),
+);
+
+/*
+|--------------------------------------------------------------------------
+| Audit events
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/audit-events",
+  asyncHandler(async (request, response) => {
+    const queryLimit =
+      typeof request.query.limit === "string"
+        ? Number(request.query.limit)
+        : 20;
+
+    const limit =
+      Number.isInteger(queryLimit) && queryLimit > 0
+        ? Math.min(queryLimit, 50)
+        : 20;
+
+    const auditEvents = await prisma.auditEvent.findMany({
+      orderBy: {
+        createdAt: "desc",
+      },
+
+      take: limit,
+    });
+
+    response.status(200).json({
+      success: true,
+      data: auditEvents,
+    });
+  }),
+);
+
+/*
+|--------------------------------------------------------------------------
+| Approval queue
+|--------------------------------------------------------------------------
+*/
+
+app.get(
+  "/api/approvals",
+  asyncHandler(async (_request, response) => {
+    const approvalRequests = await prisma.approvalRequest.findMany({
+      orderBy: {
+        requestedAt: "desc",
+      },
+    });
+
+    response.status(200).json({
+      success: true,
+      data: approvalRequests,
+    });
+  }),
+);
+
+app.patch(
+  "/api/approvals/:approvalId",
+  asyncHandler(async (request, response) => {
+    const approvalId = getNonEmptyString(request.params.approvalId);
+
+    if (!approvalId) {
+      response.status(400).json({
+        success: false,
+
+        message: "A valid approval request ID is required.",
+      });
+
+      return;
+    }
+
+    const body = getRequestBody(request.body);
+
+    const requestedDecision = parseReviewDecision(body.decision);
+
+    if (!requestedDecision) {
+      response.status(400).json({
+        success: false,
+
         message: "Decision must be APPROVED or REJECTED.",
       });
 
       return;
     }
 
-    const approval = approvalRequests.find(
-      (currentApproval) => currentApproval.id === approvalId,
-    );
+    const reviewedBy =
+      getNonEmptyString(body.reviewedBy) ?? "dashboard-supervisor";
 
-    if (!approval) {
+    const reviewResult = await prisma.$transaction(async (transaction) => {
+      const approval = await transaction.approvalRequest.findUnique({
+        where: {
+          id: approvalId,
+        },
+      });
+
+      if (!approval) {
+        return {
+          type: "APPROVAL_NOT_FOUND",
+        } as const;
+      }
+
+      if (approval.status !== "PENDING") {
+        return {
+          type: "ALREADY_REVIEWED",
+          status: approval.status,
+        } as const;
+      }
+
+      const agentRecord = await transaction.financialAgent.findUnique({
+        where: {
+          id: approval.agentId,
+        },
+
+        include: {
+          allowedActions: {
+            select: {
+              action: true,
+            },
+          },
+        },
+      });
+
+      if (!agentRecord) {
+        return {
+          type: "AGENT_NOT_FOUND",
+        } as const;
+      }
+
+      const systemState = await transaction.systemState.upsert({
+        where: {
+          id: 1,
+        },
+
+        update: {},
+
+        create: {
+          id: 1,
+          emergencyStop: false,
+        },
+      });
+
+      const agent = mapAgent(agentRecord);
+
+      let spentToday = agent.spentToday;
+
+      if (requestedDecision === "APPROVED") {
+        const executionDecision = validateApprovedAction(
+          approval,
+          agent,
+          systemState.emergencyStop,
+        );
+
+        if (executionDecision.status === "DENIED") {
+          return {
+            type: "EXECUTION_BLOCKED",
+            decision: executionDecision,
+          } as const;
+        }
+
+        const updatedAgent = await transaction.financialAgent.update({
+          where: {
+            id: agent.id,
+          },
+
+          data: {
+            spentToday: {
+              increment: approval.amount,
+            },
+          },
+
+          select: {
+            spentToday: true,
+          },
+        });
+
+        spentToday = updatedAgent.spentToday;
+      }
+
+      const updatedApproval = await transaction.approvalRequest.update({
+        where: {
+          id: approval.id,
+        },
+
+        data: {
+          status: requestedDecision,
+
+          reviewedAt: new Date(),
+          reviewedBy,
+        },
+      });
+
+      await transaction.auditEvent.create({
+        data: {
+          category: "APPROVAL_DECISION",
+
+          actor: reviewedBy,
+          agentName: agent.name,
+          action: approval.action,
+          amount: approval.amount,
+
+          outcome: requestedDecision,
+
+          message:
+            requestedDecision === "APPROVED"
+              ? `${agent.name} request was approved and executed.`
+              : `${agent.name} request was rejected by the supervisor.`,
+
+          agent: {
+            connect: {
+              id: agent.id,
+            },
+          },
+        },
+      });
+
+      return {
+        type: "SUCCESS",
+
+        approval: updatedApproval,
+
+        budget: {
+          dailyBudget: agent.dailyBudget,
+
+          spentToday,
+
+          remainingBudget: agent.dailyBudget - spentToday,
+        },
+      } as const;
+    });
+
+    if (reviewResult.type === "APPROVAL_NOT_FOUND") {
       response.status(404).json({
         success: false,
+
         message: "Approval request not found.",
       });
 
       return;
     }
 
-    if (approval.status !== "PENDING") {
+    if (reviewResult.type === "ALREADY_REVIEWED") {
       response.status(409).json({
         success: false,
-        message: `This request has already been ${approval.status.toLowerCase()}.`,
+
+        message: `This request has already been ${reviewResult.status.toLowerCase()}.`,
       });
 
       return;
     }
 
-    const agent = agents.find(
-      (currentAgent) => currentAgent.id === approval.agentId,
-    );
-
-    if (!agent) {
+    if (reviewResult.type === "AGENT_NOT_FOUND") {
       response.status(404).json({
         success: false,
+
         message: "The agent associated with this request was not found.",
       });
 
       return;
     }
 
-    const reviewedBy =
-      typeof body.reviewedBy === "string" && body.reviewedBy.trim()
-        ? body.reviewedBy.trim()
-        : "dashboard-supervisor";
+    if (reviewResult.type === "EXECUTION_BLOCKED") {
+      response.status(409).json({
+        success: false,
+        message: reviewResult.decision.reason,
 
-    if (body.decision === "APPROVED") {
-      const executionDecision = validateApprovedAction(approval, agent);
+        policyCode: reviewResult.decision.policyCode,
+      });
 
-      if (executionDecision.status === "DENIED") {
-        response.status(409).json({
-          success: false,
-          message: executionDecision.reason,
-          policyCode: executionDecision.policyCode,
-        });
-
-        return;
-      }
-
-      agent.spentToday += approval.amount;
+      return;
     }
-
-    approval.status = body.decision;
-    approval.reviewedAt = new Date().toISOString();
-    approval.reviewedBy = reviewedBy;
-
-    recordAuditEvent({
-      category: "APPROVAL_DECISION",
-      actor: reviewedBy,
-      agentId: agent.id,
-      agentName: agent.name,
-      action: approval.action,
-      amount: approval.amount,
-      outcome: body.decision,
-      message:
-        body.decision === "APPROVED"
-          ? `${agent.name} request was approved and executed.`
-          : `${agent.name} request was rejected by the supervisor.`,
-    });
 
     response.status(200).json({
       success: true,
+
       message:
-        body.decision === "APPROVED"
+        requestedDecision === "APPROVED"
           ? "Approval request approved and executed."
           : "Approval request rejected.",
+
       data: {
-        approval,
-        budget: {
-          dailyBudget: agent.dailyBudget,
-          spentToday: agent.spentToday,
-          remainingBudget: agent.dailyBudget - agent.spentToday,
-        },
+        approval: reviewResult.approval,
+
+        budget: reviewResult.budget,
       },
     });
-  },
+  }),
 );
-// Keep this 404 middleware below every valid route.
+
+/*
+|--------------------------------------------------------------------------
+| 404 handler
+|--------------------------------------------------------------------------
+*/
+
 app.use((_request: Request, response: Response) => {
   response.status(404).json({
     success: false,
-    message: "Route not found",
+    message: "Route not found.",
   });
 });
+
+/*
+|--------------------------------------------------------------------------
+| Global error handler
+|--------------------------------------------------------------------------
+*/
+
+app.use(
+  (
+    error: unknown,
+    _request: Request,
+    response: Response,
+    _next: NextFunction,
+  ) => {
+    console.error("Unhandled backend error:", error);
+
+    response.status(500).json({
+      success: false,
+
+      message: "An unexpected server error occurred.",
+    });
+  },
+);
+
+/*
+|--------------------------------------------------------------------------
+| Start server
+|--------------------------------------------------------------------------
+*/
 
 app.listen(port, () => {
   console.log(`AgentGuard backend running at http://localhost:${port}`);
