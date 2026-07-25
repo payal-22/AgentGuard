@@ -1,0 +1,97 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  importFileExtension = "ts"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum AgentStatus {
+  ACTIVE
+  PAUSED
+  REVOKED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AuditCategory {
+  ACTION_EVALUATION
+  AGENT_STATUS_CHANGE
+  SYSTEM_CONTROL
+  APPROVAL_DECISION
+}
+
+model FinancialAgent {
+  id                String            @id
+  name              String
+  description       String
+  status            AgentStatus       @default(ACTIVE)
+  transactionLimit  Int
+  approvalThreshold Int
+  dailyBudget       Int
+  spentToday        Int               @default(0)
+  allowedActions    AgentPermission[]
+  approvals         ApprovalRequest[]
+  auditEvents       AuditEvent[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+}
+
+model AgentPermission {
+  id      Int            @id @default(autoincrement())
+  action  String
+  agentId String
+  agent   FinancialAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, action])
+  @@index([agentId])
+}
+
+model ApprovalRequest {
+  id          String         @id @default(uuid())
+  agentId     String
+  agentName   String
+  action      String
+  amount      Int
+  customerId  String?
+  reason      String
+  status      ApprovalStatus @default(PENDING)
+  requestedAt DateTime       @default(now())
+  reviewedAt  DateTime?
+  reviewedBy  String?
+  agent       FinancialAgent @relation(fields: [agentId], references: [id], onDelete: Restrict)
+
+  @@index([agentId])
+  @@index([status])
+  @@index([requestedAt])
+}
+
+model AuditEvent {
+  id        String          @id @default(uuid())
+  category  AuditCategory
+  actor     String
+  agentId   String?
+  agentName String?
+  action    String?
+  amount    Int?
+  outcome   String
+  message   String
+  createdAt DateTime        @default(now())
+  agent     FinancialAgent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  @@index([agentId])
+  @@index([category])
+  @@index([createdAt])
+}
+
+model SystemState {
+  id            Int      @id
+  emergencyStop Boolean  @default(false)
+  updatedAt     DateTime @updatedAt
+}

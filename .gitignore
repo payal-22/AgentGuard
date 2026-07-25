@@ -1,4 +1,3 @@
-cat > .gitignore <<'EOF'
 node_modules/
 dist/
 coverage/
@@ -6,4 +5,15 @@ coverage/
 .env.*
 !.env.example
 .DS_Store
-EOF
+
+# Local environment configuration
+backend/.env
+
+# Local SQLite database
+backend/prisma/dev.db
+backend/prisma/dev.db-journal
+backend/prisma/dev.db-shm
+backend/prisma/dev.db-wal
+
+# Generated Prisma Client
+backend/src/generated/prisma/
