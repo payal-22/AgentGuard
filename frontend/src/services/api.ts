@@ -19,6 +19,7 @@ export type FinancialAgent = {
   approvalThreshold: number;
   dailyBudget: number;
   spentToday: number;
+  budgetResetAt: string;
 };
 
 export type AgentPolicyInput = {

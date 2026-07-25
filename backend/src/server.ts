@@ -24,6 +24,7 @@ type FinancialAgent = {
   approvalThreshold: number;
   dailyBudget: number;
   spentToday: number;
+  budgetResetAt: string;
 };
 
 type FinancialAgentRecord = {
@@ -35,6 +36,8 @@ type FinancialAgentRecord = {
   approvalThreshold: number;
   dailyBudget: number;
   spentToday: number;
+  budgetResetAt: Date;
+
   allowedActions: Array<{
     action: string;
   }>;
@@ -165,7 +168,87 @@ function mapAgent(agent: FinancialAgentRecord): FinancialAgent {
     approvalThreshold: agent.approvalThreshold,
     dailyBudget: agent.dailyBudget,
     spentToday: agent.spentToday,
+    budgetResetAt: agent.budgetResetAt.toISOString(),
   };
+}
+
+function getCurrentUtcDayStart(): Date {
+  const now = new Date();
+
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+}
+
+async function resetExpiredDailyBudgets(): Promise<void> {
+  const currentDayStart = getCurrentUtcDayStart();
+
+  const expiredAgents = await prisma.financialAgent.findMany({
+    where: {
+      budgetResetAt: {
+        lt: currentDayStart,
+      },
+    },
+
+    select: {
+      id: true,
+      name: true,
+    },
+  });
+
+  if (expiredAgents.length === 0) {
+    return;
+  }
+
+  await prisma.$transaction(async (transaction) => {
+    for (const expiredAgent of expiredAgents) {
+      const currentAgent = await transaction.financialAgent.findUnique({
+        where: {
+          id: expiredAgent.id,
+        },
+
+        select: {
+          id: true,
+          name: true,
+          budgetResetAt: true,
+        },
+      });
+
+      if (!currentAgent || currentAgent.budgetResetAt >= currentDayStart) {
+        continue;
+      }
+
+      const resetTime = new Date();
+
+      await transaction.financialAgent.update({
+        where: {
+          id: currentAgent.id,
+        },
+
+        data: {
+          spentToday: 0,
+          budgetResetAt: resetTime,
+        },
+      });
+
+      await transaction.auditEvent.create({
+        data: {
+          category: "SYSTEM_CONTROL",
+          actor: "agentguard-system",
+          agentName: currentAgent.name,
+          outcome: "DAILY_BUDGET_RESET",
+
+          message: `${currentAgent.name} daily spending was reset for a new UTC day.`,
+
+          agent: {
+            connect: {
+              id: currentAgent.id,
+            },
+          },
+        },
+      });
+    }
+  });
 }
 
 function evaluateAction(
@@ -334,6 +417,7 @@ app.get(
 app.get(
   "/api/agents",
   asyncHandler(async (_request, response) => {
+    await resetExpiredDailyBudgets();
     const agentRecords = await prisma.financialAgent.findMany({
       include: {
         allowedActions: {
@@ -519,7 +603,7 @@ app.patch(
 
       return;
     }
-
+    await resetExpiredDailyBudgets();
     const existingAgent = await prisma.financialAgent.findUnique({
       where: {
         id: agentId,
@@ -780,7 +864,7 @@ app.post(
           }
         : {}),
     };
-
+    await resetExpiredDailyBudgets();
     const evaluation = await prisma.$transaction(async (transaction) => {
       const agentRecord = await transaction.financialAgent.findUnique({
         where: {
@@ -1025,6 +1109,7 @@ app.patch(
 
     const reviewedBy =
       getNonEmptyString(body.reviewedBy) ?? "dashboard-supervisor";
+    await resetExpiredDailyBudgets();
 
     const reviewResult = await prisma.$transaction(async (transaction) => {
       const approval = await transaction.approvalRequest.findUnique({

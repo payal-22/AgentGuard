@@ -816,6 +816,11 @@ function App() {
                       <strong>{formatCurrency(agent.spentToday)}</strong>
                     </div>
                   </div>
+                  <div>
+                    <span>Budget period started</span>
+
+                    <strong>{formatDateTime(agent.budgetResetAt)}</strong>
+                  </div>
 
                   <div className="budget-section">
                     <div className="budget-label">

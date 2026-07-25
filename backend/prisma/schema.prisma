@@ -37,6 +37,7 @@ model FinancialAgent {
   approvalThreshold Int
   dailyBudget       Int
   spentToday        Int               @default(0)
+  budgetResetAt     DateTime          @default(now())
   allowedActions    AgentPermission[]
   approvals         ApprovalRequest[]
   auditEvents       AuditEvent[]
