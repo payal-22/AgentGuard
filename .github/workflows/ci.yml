@@ -14,18 +14,11 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: agentguard-ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   validate:
     name: Validate and test
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
-    env:
-      DATABASE_URL: file:./prisma/ci.db
 
     steps:
       - name: Check out repository
@@ -42,18 +35,26 @@ jobs:
 
       - name: Install backend dependencies
         working-directory: backend
+        env:
+          DATABASE_URL: file:./prisma/ci.db
         run: npm ci
 
       - name: Generate Prisma Client
         working-directory: backend
+        env:
+          DATABASE_URL: file:./prisma/ci.db
         run: npx prisma generate
 
       - name: Validate Prisma schema
         working-directory: backend
+        env:
+          DATABASE_URL: file:./prisma/ci.db
         run: npx prisma validate
 
       - name: Check backend TypeScript
         working-directory: backend
+        env:
+          DATABASE_URL: file:./prisma/ci.db
         run: npm run check
 
       - name: Install frontend dependencies
