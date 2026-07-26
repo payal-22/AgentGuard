@@ -24,6 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    env:
+      DATABASE_URL: file:./prisma/ci.db
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -85,3 +88,6 @@ jobs:
             frontend/test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+
+  
